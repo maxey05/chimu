@@ -1,0 +1,39 @@
+# secrets and supabase local state
+.env
+.env.*
+supabase/.temp/
+supabase/.branches/
+__pycache__/
+
+# web deploy output
+.wrangler/
+
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.iml
+*.apk
+*.aab
+
+# signing keys never go in the repo
+*.jks
+*.keystore
+keystore.properties
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# mds
+AGENTS.md
+CLAUDE.md
+COMMITS.md 
+DESIGN.md 
+RFCS.md 
+RULES.md
+rfcs/
