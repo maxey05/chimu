@@ -2,8 +2,8 @@ package com.chimu
 
 /**
  * Local SQLite schema. It mirrors every table in DESIGN.md (the Supabase columns, same names),
- * plus the phone-only columns: `dirty` on every table, and `status` and `local_photo` on
- * `transactions`. Kept free of Android types so the SQL can be checked on its own.
+ * plus the phone-only columns: `dirty` on every table, and `status`, `local_photo` and
+ * `extract_error` on `transactions`. Kept free of Android types so the SQL can be checked on its own.
  *
  * Conventions: ids are client-made UUID text, money is integer centavos, times are epoch
  * milliseconds, booleans are 0/1, dates are `YYYY-MM-DD` text.
@@ -15,7 +15,10 @@ package com.chimu
  * matching Supabase migration (RULES 11).
  */
 object Schema {
-    const val VERSION = 1
+    const val VERSION = 2
+
+    /** Version 1 -> 2 (RFC-004): why the last try at reading a scanned receipt failed. Phone only, never synced. */
+    val UPGRADE_1_TO_2: List<String> = listOf("ALTER TABLE transactions ADD COLUMN extract_error TEXT")
 
     val CREATE_STATEMENTS: List<String> = listOf(
         // Not synced as syncable rows: written by trigger / RPC on the server, cached read-only here.
@@ -88,7 +91,8 @@ object Schema {
             vat           INTEGER,
             vat_exempt    INTEGER,
             status        TEXT NOT NULL DEFAULT 'confirmed',
-            local_photo   TEXT
+            local_photo   TEXT,
+            extract_error TEXT
         )
         """,
         """

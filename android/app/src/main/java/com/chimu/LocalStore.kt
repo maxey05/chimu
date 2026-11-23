@@ -21,6 +21,14 @@ class LocalStore(private val db: Db, private val prefs: SharedPreferences) : Syn
 
     override fun setReceiptPath(owner: String, txnId: String, path: String) = db.setReceiptPath(owner, txnId, path)
 
+    override fun pendingExtractions(owner: String, includeFailed: Boolean) = db.pendingExtractions(owner, includeFailed)
+
+    override fun applyExtraction(owner: String, txnId: String, receipt: ExtractedReceipt) =
+        db.applyExtraction(owner, txnId, receipt)
+
+    override fun markExtractionFailed(owner: String, txnId: String, message: String) =
+        db.markExtractionFailed(owner, txnId, message)
+
     override fun readPhoto(localPhoto: String): ByteArray? =
         File(localPhoto).takeIf { it.isFile }?.readBytes()
 

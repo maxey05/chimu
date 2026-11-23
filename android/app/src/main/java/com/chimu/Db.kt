@@ -24,9 +24,9 @@ class Db(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the first schema, so there is nothing to upgrade from yet.
-        // Later versions add `if (oldVersion < N) { ... }` steps here, in the same change as
-        // the matching Supabase migration and the DESIGN.md update (RULES 11).
+        // Each step runs in the same change as the matching Supabase migration (if any) and the
+        // DESIGN.md update (RULES 11). Steps are cumulative, so an old install walks through all of them.
+        if (oldVersion < 2) Schema.UPGRADE_1_TO_2.forEach { db.execSQL(it) }
     }
 
     // --- wallets -------------------------------------------------------------
@@ -72,6 +72,7 @@ class Db(context: Context) :
             put("owner_id", txn.ownerId)
             put("source", txn.source)
             put("status", txn.status)
+            put("local_photo", txn.localPhoto) // set for a scan (RFC-004); null for a manual entry
         }
         writableDatabase.insertOrThrow("transactions", null, values)
     }
@@ -97,6 +98,109 @@ class Db(context: Context) :
         )
     }
 
+    /** One transaction by id, tombstones included. Null if the phone has no such row for [ownerId]. */
+    fun txn(ownerId: String, id: String): Txn? =
+        readableDatabase.query(
+            "transactions", null, "id = ? AND owner_id = ?", arrayOf(id, ownerId), null, null, null,
+        ).use { c -> if (c.moveToFirst()) c.toTxn() else null }
+
+    /**
+     * Saves the Review screen: the edit fields plus `status = confirmed`, and clears any extraction
+     * error. The receipt, VAT and invoice columns stay as the reader filled them. A normal edit
+     * (`updated_at` now, `dirty = 1`) so it syncs.
+     */
+    fun confirmTxn(txn: Txn) {
+        val values = txnEditValues(txn, System.currentTimeMillis()).apply {
+            put("status", "confirmed")
+            putNull("extract_error")
+        }
+        writableDatabase.update("transactions", values, "id = ? AND owner_id = ?", arrayOf(txn.id, txn.ownerId))
+    }
+
+    /**
+     * Joins a scan to an existing payment ("attach to this payment", RFC-004). In one database
+     * transaction the payment takes the scan's photo and receipt fields
+     * (a normal edit), and the scan row is tombstoned so it syncs as deleted. The photo file stays
+     * where it is: the payment now owns it. Only fills what the payment lacks, and never replaces a
+     * photo it already has. Returns false (and changes nothing) if either row is missing or the payment already has a photo.
+     */
+    fun attachScan(ownerId: String, scanId: String, paymentId: String): Boolean {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val scan = txn(ownerId, scanId)
+            val payment = txn(ownerId, paymentId)
+            if (scan == null || payment == null || scan.deleted || payment.deleted) return false
+            if (scanId == paymentId || !payment.receiptPath.isNullOrEmpty() || !payment.localPhoto.isNullOrEmpty()) return false
+            val now = System.currentTimeMillis()
+            val values = ContentValues().apply {
+                put("local_photo", scan.localPhoto)
+                // The uploaded copy belongs to the scan's id, so the payment uploads its own copy under its own id.
+                putNull("receipt_path")
+                put("ref_no", payment.refNo ?: scan.refNo)
+                put("seller_tin", payment.sellerTin ?: scan.sellerTin)
+                put("invoice_no", payment.invoiceNo ?: scan.invoiceNo)
+                putLong("vatable_sales", payment.vatableSales ?: scan.vatableSales)
+                putLong("vat", payment.vat ?: scan.vat)
+                putLong("vat_exempt", payment.vatExempt ?: scan.vatExempt)
+                put("merchant", payment.merchant ?: scan.merchant)
+                put("category", payment.category ?: scan.category)
+                put("updated_at", now)
+                put("dirty", 1)
+            }
+            db.update("transactions", values, "id = ? AND owner_id = ?", arrayOf(paymentId, ownerId))
+            db.execSQL(
+                "UPDATE transactions SET deleted = 1, updated_at = ?, dirty = 1, local_photo = NULL WHERE id = ? AND owner_id = ?",
+                arrayOf<Any>(now, scanId, ownerId),
+            )
+            db.setTransactionSuccessful()
+            return true
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    // --- receipt scanning (RFC-004) ------------------------------------------
+
+    /** Scans that are ready to be read: photo uploaded, still `pending`. Failed ones only when [includeFailed]. */
+    fun pendingExtractions(ownerId: String, includeFailed: Boolean): List<ExtractJob> =
+        readableDatabase.query(
+            "transactions", arrayOf("id", "receipt_path"), SyncSql.extractWhere(includeFailed), arrayOf(ownerId), null, null, "updated_at, id",
+        ).use { c -> buildList { while (c.moveToNext()) add(ExtractJob(c.text("id"), c.text("receipt_path"))) } }
+
+    /**
+     * Fills a waiting scan with what the reader found and marks it `extracted`, as a normal edit
+     * (`updated_at` now, `dirty = 1`). Fields the reader couldn't find keep their placeholder
+     * value (amount 0, today's date) for the Review screen to highlight. False if the scan is no longer
+     * waiting: the user may have filled it in by hand in the meantime, and that wins.
+     */
+    fun applyExtraction(ownerId: String, id: String, r: ExtractedReceipt): Boolean {
+        val values = ContentValues().apply {
+            put("type", r.type.slug)
+            if (r.amount != null) put("amount", r.amount)
+            if (r.date != null) put("date", r.date)
+            put("merchant", r.merchant)
+            put("category", r.category)
+            put("ref_no", r.refNo)
+            put("seller_tin", r.sellerTin)
+            put("invoice_no", r.invoiceNo)
+            putLong("vatable_sales", r.vatableSales)
+            putLong("vat", r.vat)
+            putLong("vat_exempt", r.vatExempt)
+            put("status", "extracted")
+            putNull("extract_error")
+            put("updated_at", System.currentTimeMillis())
+            put("dirty", 1)
+        }
+        return writableDatabase.update("transactions", values, SyncSql.EXTRACT_APPLY_WHERE, arrayOf(id, ownerId)) > 0
+    }
+
+    /** Remembers why reading failed. Phone only: it changes neither `updated_at` nor `dirty`. */
+    fun markExtractionFailed(ownerId: String, id: String, message: String) {
+        val values = ContentValues().apply { put("extract_error", message.take(300)) }
+        writableDatabase.update("transactions", values, SyncSql.EXTRACT_APPLY_WHERE, arrayOf(id, ownerId))
+    }
+
     // --- sync (RFC-003) ------------------------------------------------------
     // These move rows between this database and Supabase. They write `rev`, `dirty` and the
     // server's own `updated_at` as given, so they are only for the sync engine (RULES 10).
@@ -116,7 +220,7 @@ class Db(context: Context) :
     /**
      * Stores rows from the server, each one only when [Lww.shouldApply] says the server copy is at
      * least as new as ours. A stored row takes the server's `rev` and loses its `dirty` flag. The
-     * phone-only columns (`status`, `local_photo`) are left alone on update. One transaction.
+     * phone-only columns (`status`, `local_photo`, `extract_error`) are left alone on update. One transaction.
      * Returns how many rows were stored.
      */
     fun applyRemote(table: SyncTable, rows: List<Row>): Int {
@@ -208,6 +312,10 @@ class Db(context: Context) :
         db.query(table.name, arrayOf("updated_at"), "id = ?", arrayOf(id), null, null, null)
             .use { c -> if (c.moveToFirst()) c.getLong(0) else null }
 
+    private fun ContentValues.putLong(key: String, value: Long?) {
+        if (value == null) putNull(key) else put(key, value)
+    }
+
     private fun List<Col>.names(): Array<String> = map { it.name }.toTypedArray()
 
     private fun ContentValues.putColumn(col: Col, value: Any?) {
@@ -281,6 +389,15 @@ class Db(context: Context) :
         status = text("status"),
         updatedAt = number("updated_at"),
         deleted = number("deleted") != 0L,
+        refNo = textOrNull("ref_no"),
+        receiptPath = textOrNull("receipt_path"),
+        sellerTin = textOrNull("seller_tin"),
+        invoiceNo = textOrNull("invoice_no"),
+        vatableSales = numberOrNull("vatable_sales"),
+        vat = numberOrNull("vat"),
+        vatExempt = numberOrNull("vat_exempt"),
+        localPhoto = textOrNull("local_photo"),
+        extractError = textOrNull("extract_error"),
     )
 
     private fun Cursor.text(column: String): String = getString(getColumnIndexOrThrow(column))
@@ -291,6 +408,11 @@ class Db(context: Context) :
     }
 
     private fun Cursor.number(column: String): Long = getLong(getColumnIndexOrThrow(column))
+
+    private fun Cursor.numberOrNull(column: String): Long? {
+        val index = getColumnIndexOrThrow(column)
+        return if (isNull(index)) null else getLong(index)
+    }
 
     companion object {
         const val NAME = "chimu.db"
