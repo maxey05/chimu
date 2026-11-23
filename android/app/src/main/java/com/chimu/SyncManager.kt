@@ -152,9 +152,21 @@ class SyncManager(
         }
     }
 
+    /**
+     * Runs a sync right now, not after the 3 s quiet time, because a group was just created, joined or
+     * left, or a member was removed (RFC-006). The engine sees that the memberships differ and starts the
+     * pull over, so the lists change to what the user may see now. True if the sync finished cleanly.
+     */
+    suspend fun afterMembershipChange(): Boolean = syncNow() == SyncOutcome.DONE
+
     /** A signed link to a receipt photo (own or a group member's). */
     suspend fun photoUrl(receiptPath: String): String =
         withContext(Dispatchers.IO) { SupaRemote(Supa.client).photoUrl(receiptPath) }
+
+    /** A group member's receipt photo, fetched through a signed link (RFC-006, DESIGN.md -> Sync protocol step 5). Throws [SyncUnavailable] / [SyncRejected]. */
+    suspend fun sharedPhotoBytes(receiptPath: String): ByteArray = withContext(Dispatchers.IO) {
+        SignedLink.fetch(SupaRemote(Supa.client).photoUrl(receiptPath))
+    }
 
     /** The bytes of a receipt photo from the server, for a phone that no longer has the file (after a reinstall). Throws [SyncUnavailable] / [SyncRejected]. */
     suspend fun photoBytes(receiptPath: String): ByteArray =
