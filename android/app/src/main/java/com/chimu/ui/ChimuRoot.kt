@@ -86,7 +86,10 @@ fun ChimuRoot() {
 @Composable
 private fun MainShell(app: ChimuApp, identity: Identity) {
     val openOwner by app.repo.openOwner.collectAsState()
-    LaunchedEffect(identity.userId) { app.repo.open(identity.userId) }
+    LaunchedEffect(identity.userId) {
+        app.repo.open(identity.userId)
+        app.sync.start(identity.userId) // shows what the phone remembers, then syncs once
+    }
     if (openOwner != identity.userId) {
         Splash()
         return

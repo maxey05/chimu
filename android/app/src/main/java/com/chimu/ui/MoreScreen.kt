@@ -96,6 +96,7 @@ fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit) {
                                 Supa.client.auth.signOut()
                                 app.account.signedOut()
                                 app.repo.close()
+                                app.sync.stop()
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
