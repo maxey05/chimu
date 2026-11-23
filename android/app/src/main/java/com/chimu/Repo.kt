@@ -25,6 +25,8 @@ class Repo(
 ) {
     private val _allWallets = MutableStateFlow<List<Wallet>>(emptyList())
     private val _txns = MutableStateFlow<List<Txn>>(emptyList())
+    private val _inbox = MutableStateFlow<List<Txn>>(emptyList())
+    private val _groups = MutableStateFlow(GroupSnapshot())
     private val _openOwner = MutableStateFlow<String?>(null)
 
     @Volatile
@@ -33,8 +35,17 @@ class Repo(
     /** Every wallet of the open user, archived ones included (so old rows can still show a name). */
     val allWallets: StateFlow<List<Wallet>> = _allWallets.asStateFlow()
 
-    /** The open user's live (non-deleted) transactions. */
+    /** The open user's live (non-deleted) transactions. Unconfirmed Inbox items are not in here: see [inbox]. */
     val txns: StateFlow<List<Txn>> = _txns.asStateFlow()
+
+    /** Auto-logged payments waiting for the user to confirm, edit or dismiss them (RFC-005). They live on this phone only. */
+    val inbox: StateFlow<List<Txn>> = _inbox.asStateFlow()
+
+    /**
+     * What the Group tab shows (RFC-006): the user's groups, their members and those members' cached
+     * transactions. Read-only, filled by sync; empty when the user is in no group.
+     */
+    val groups: StateFlow<GroupSnapshot> = _groups.asStateFlow()
 
     /** The user id whose data is loaded, or null while nothing is open. */
     val openOwner: StateFlow<String?> = _openOwner.asStateFlow()
@@ -70,6 +81,8 @@ class Repo(
         _openOwner.value = null
         _allWallets.value = emptyList()
         _txns.value = emptyList()
+        _inbox.value = emptyList()
+        _groups.value = GroupSnapshot()
     }
 
     /** Wallets that can be used for new entries. */
@@ -142,7 +155,10 @@ class Repo(
         onChanged()
     }
 
-    /** Saves the Review screen: the entry becomes `confirmed` and counts as checked by the user. */
+    /**
+     * Saves the Review screen or an Inbox item: the entry becomes `confirmed` and counts as checked by
+     * the user. An Inbox item starts to sync from here (`dirty = 1`, then [onChanged]).
+     */
     suspend fun confirmTxn(txn: Txn) = withContext(Dispatchers.IO) {
         val owner = requireOwner()
         db.confirmTxn(txn.copy(ownerId = owner))
@@ -150,8 +166,26 @@ class Repo(
         onChanged()
     }
 
-    /** The payment a scanned receipt probably belongs to, or null (same amount, within 2 days, no photo yet). */
-    fun matchFor(scanId: String, amount: Long, date: String): Txn? = ReceiptMatch.find(_txns.value, scanId, amount, date)
+    /** A transaction in the user's groups (theirs or another member's) by id, for the read-only detail screen. Null if the cache no longer has it. */
+    fun groupTxn(id: String): Txn? = _groups.value.txns.firstOrNull { it.id == id }
+
+    /** One of the open user's entries by id, an Inbox item too. Null if there is none. */
+    fun find(id: String): Txn? = _txns.value.firstOrNull { it.id == id } ?: _inbox.value.firstOrNull { it.id == id }
+
+    /** The payment a scanned receipt probably belongs to, or null (same amount, within 2 days, no photo yet). Inbox items count too. */
+    fun matchFor(scanId: String, amount: Long, date: String): Txn? =
+        ReceiptMatch.find(_txns.value + _inbox.value, scanId, amount, date)
+
+    /**
+     * Dismisses an Inbox item: it is deleted from this phone for good, which is allowed because it never
+     * synced (RULES 9). Returns false if the item is gone or is no longer in the Inbox.
+     */
+    suspend fun dismissInbox(id: String): Boolean = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        val done = db.dismissInbox(owner, id)
+        reload(owner)
+        done
+    }
 
     /** Gives [paymentId] the scan's photo and receipt details and removes the scan entry. False if nothing changed. */
     suspend fun attachScan(scanId: String, paymentId: String): Boolean = withContext(Dispatchers.IO) {
@@ -177,6 +211,15 @@ class Repo(
     private fun reload(owner: String) {
         _allWallets.value = db.wallets(owner)
         _txns.value = db.txns(owner)
+        _inbox.value = db.inboxTxns(owner)
+        _groups.value = loadGroups(owner)
+    }
+
+    /** Skips the big read when the user is in no group; [GroupRules.snapshot] drops anything the user may not see. */
+    private fun loadGroups(owner: String): GroupSnapshot {
+        val memberships = db.cachedMemberships()
+        if (memberships.none { it.userId == owner }) return GroupSnapshot(me = owner)
+        return GroupRules.snapshot(owner, db.cachedGroups(), memberships, db.cachedNames(), db.cachedTxns(), db.cachedWallets())
     }
 
     private fun requireOwner(): String = checkNotNull(ownerId) { "No user is open" }
