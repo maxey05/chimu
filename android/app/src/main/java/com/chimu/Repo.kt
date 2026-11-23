@@ -1,6 +1,7 @@
 package com.chimu
 
 import android.content.SharedPreferences
+import java.time.LocalDate
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +108,58 @@ class Repo(
         if (exists) db.updateTxn(toSave) else db.insertTxn(toSave)
         reload(owner)
         onChanged()
+    }
+
+    /**
+     * Logs a scanned receipt (RFC-004): a `pending` row on the first active wallet with amount 0 and
+     * today's date as placeholders, pointing at the shrunk photo at [photoPath]. Sync uploads the
+     * photo and has it read (see [SyncEngine]); until then the row waits, offline or not. The row's
+     * id is the photo's file name, so the two always belong together.
+     */
+    suspend fun createScan(id: String, photoPath: String) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        val wallet = _allWallets.value.firstOrNull { !it.deleted }
+            ?: throw IllegalStateException("You have no wallets. Add one under More, then Wallets.")
+        db.insertTxn(
+            Txn(
+                id = id,
+                ownerId = owner,
+                type = TxnType.EXPENSE,
+                walletId = wallet.id,
+                toWalletId = null,
+                amount = 0,
+                date = LocalDate.now().toString(),
+                category = null,
+                merchant = null,
+                note = null,
+                isBusiness = false,
+                source = "receipt",
+                status = "pending",
+                localPhoto = photoPath,
+            ),
+        )
+        reload(owner)
+        onChanged()
+    }
+
+    /** Saves the Review screen: the entry becomes `confirmed` and counts as checked by the user. */
+    suspend fun confirmTxn(txn: Txn) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        db.confirmTxn(txn.copy(ownerId = owner))
+        reload(owner)
+        onChanged()
+    }
+
+    /** The payment a scanned receipt probably belongs to, or null (same amount, within 2 days, no photo yet). */
+    fun matchFor(scanId: String, amount: Long, date: String): Txn? = ReceiptMatch.find(_txns.value, scanId, amount, date)
+
+    /** Gives [paymentId] the scan's photo and receipt details and removes the scan entry. False if nothing changed. */
+    suspend fun attachScan(scanId: String, paymentId: String): Boolean = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        val done = db.attachScan(owner, scanId, paymentId)
+        reload(owner)
+        if (done) onChanged()
+        done
     }
 
     suspend fun deleteTxn(id: String) = withContext(Dispatchers.IO) {
