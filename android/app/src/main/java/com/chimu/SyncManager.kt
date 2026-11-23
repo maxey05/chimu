@@ -89,6 +89,10 @@ class SyncManager(
 
     @Volatile
     private var started = 0L // number of syncs begun; written under [lock]
+
+    /** Someone asked for scans that failed to be read to be tried again; the next sync consumes it. */
+    @Volatile
+    private var retryWanted = false
     private var lastOutcome = SyncOutcome.SKIPPED // written under [lock]
     private var debounce: Job? = null
 
@@ -103,7 +107,7 @@ class SyncManager(
                 pending = store.pendingCount(owner),
                 error = prefs.getString(errorKey(owner), null),
             )
-            syncNow()
+            syncNow(retryFailed = true)
         }
     }
 
@@ -126,38 +130,50 @@ class SyncManager(
         }
     }
 
-    /** Pull-to-refresh, Sync now. Returns at once; watch [status]. */
+    /** Pull-to-refresh, Sync now. Returns at once; watch [status]. Also tries unreadable scans again (RFC-004). */
     fun requestNow() {
-        scope.launch { syncNow() }
+        scope.launch { syncNow(retryFailed = true) }
     }
 
-    /** Runs a sync and waits for it. WorkManager uses this; screens use [requestNow]. */
-    suspend fun syncNow(): SyncOutcome {
+    /**
+     * Runs a sync and waits for it. WorkManager and the debounce use this; screens use [requestNow].
+     * [retryFailed] says whether receipts that failed to be read are tried again. Only a person
+     * asking (app start, pull-to-refresh) does that, so a photo the reader can't read isn't sent over and over.
+     */
+    suspend fun syncNow(retryFailed: Boolean = false): SyncOutcome {
+        if (retryFailed) retryWanted = true
         val seen = started
         return lock.withLock {
-            if (started > seen) return@withLock lastOutcome // a sync that began after this request has it covered
+            // A sync that began after this request has it covered, unless it didn't take the retry request along.
+            if (started > seen && !retryWanted) return@withLock lastOutcome
             started++
             lastOutcome = runLocked()
             lastOutcome
         }
     }
 
-    /** A signed link to a receipt photo (own or a group member's). For RFC-004's viewer. */
+    /** A signed link to a receipt photo (own or a group member's). */
     suspend fun photoUrl(receiptPath: String): String =
         withContext(Dispatchers.IO) { SupaRemote(Supa.client).photoUrl(receiptPath) }
+
+    /** The bytes of a receipt photo from the server, for a phone that no longer has the file (after a reinstall). Throws [SyncUnavailable] / [SyncRejected]. */
+    suspend fun photoBytes(receiptPath: String): ByteArray =
+        withContext(Dispatchers.IO) { SupaRemote(Supa.client).downloadPhoto(receiptPath) }
 
     private suspend fun runLocked(): SyncOutcome {
         if (!Supa.isConfigured) return SyncOutcome.SKIPPED
         val owner = account.identity.value?.userId ?: return SyncOutcome.SKIPPED
 
         _status.update { it.copy(running = true) }
+        val retryFailed = retryWanted
+        retryWanted = false
         var outcome = SyncOutcome.DONE
         var error: String? = null
         var reachedServer = false
         try {
             withContext(Dispatchers.IO) {
                 requireSession(owner)
-                val report = engine.sync(owner)
+                val report = engine.sync(owner, retryFailed)
                 reachedServer = true
                 if (!report.clean) {
                     outcome = SyncOutcome.PROBLEM
@@ -212,6 +228,7 @@ class SyncManager(
         val parts = buildList {
             if (report.rejected > 0) add("${report.rejected} changes were refused by the server")
             if (report.photoFailures > 0) add("${report.photoFailures} receipt photos couldn't be uploaded")
+            if (report.extractFailures > 0) add("${report.extractFailures} scanned receipts couldn't be read")
         }
         return parts.joinToString(" and ") + ". They stay on this phone."
     }
