@@ -16,7 +16,12 @@ import kotlinx.coroutines.withContext
  * the same phone never shows (or edits) the first person's rows. Failures are thrown, never
  * swallowed: the caller shows them and the form keeps what the user typed (RULES 20).
  */
-class Repo(private val db: Db, private val prefs: SharedPreferences) {
+class Repo(
+    private val db: Db,
+    private val prefs: SharedPreferences,
+    /** Called after every local write, so the sync engine can send it soon (RFC-003). */
+    private val onChanged: () -> Unit = {},
+) {
     private val _allWallets = MutableStateFlow<List<Wallet>>(emptyList())
     private val _txns = MutableStateFlow<List<Txn>>(emptyList())
     private val _openOwner = MutableStateFlow<String?>(null)
@@ -81,6 +86,7 @@ class Repo(private val db: Db, private val prefs: SharedPreferences) {
         val toSave = wallet.copy(ownerId = owner)
         if (exists) db.updateWallet(toSave) else db.insertWallet(toSave)
         reload(owner)
+        onChanged()
     }
 
     /** Returns false, changing nothing, if this is the last active wallet (nothing could be logged without one). */
@@ -90,6 +96,7 @@ class Repo(private val db: Db, private val prefs: SharedPreferences) {
         if (active.none { it.id == id } || active.size <= 1) return@withContext false
         db.archiveWallet(owner, id)
         reload(owner)
+        onChanged()
         true
     }
 
@@ -99,12 +106,19 @@ class Repo(private val db: Db, private val prefs: SharedPreferences) {
         val toSave = txn.copy(ownerId = owner)
         if (exists) db.updateTxn(toSave) else db.insertTxn(toSave)
         reload(owner)
+        onChanged()
     }
 
     suspend fun deleteTxn(id: String) = withContext(Dispatchers.IO) {
         val owner = requireOwner()
         db.deleteTxn(owner, id)
         reload(owner)
+        onChanged()
+    }
+
+    /** Re-reads the open user's rows, for after a sync changed the database underneath the screens. */
+    suspend fun refresh() = withContext(Dispatchers.IO) {
+        ownerId?.let { reload(it) }
     }
 
     private fun reload(owner: String) {
