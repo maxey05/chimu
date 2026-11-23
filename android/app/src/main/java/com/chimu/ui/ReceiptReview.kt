@@ -47,13 +47,21 @@ import kotlinx.coroutines.withContext
 /**
  * The receipt photo for [txn]: the phone's own file, or (after a reinstall) the copy downloaded from
  * the server. Tap it to see it full screen and zoom. If it can't be shown, a sentence says why.
+ *
+ * @param download how to fetch the photo when the phone doesn't have the file. A group member's photo
+ *   is fetched through a signed link (RFC-006), so the group detail screen passes its own.
  */
 @Composable
-fun ReceiptPhoto(app: ChimuApp, txn: Txn, modifier: Modifier = Modifier) {
+fun ReceiptPhoto(
+    app: ChimuApp,
+    txn: Txn,
+    modifier: Modifier = Modifier,
+    download: suspend (String) -> ByteArray = { app.sync.photoBytes(it) },
+) {
     val context = LocalContext.current.applicationContext
     val result by produceState<PhotoResult?>(null, txn.id, txn.localPhoto, txn.receiptPath) {
         value = withContext(Dispatchers.IO) {
-            ReceiptPhotos.load(context, txn.id, txn.localPhoto, txn.receiptPath) { app.sync.photoBytes(it) }
+            ReceiptPhotos.load(context, txn.id, txn.localPhoto, txn.receiptPath, download)
         }
     }
     var zoomed by remember { mutableStateOf(false) }
