@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the app tell whether the phone is online before asking the reader about a message (RFC-005). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Asked for at run time from More -> Auto-log payments, and only to read SMS from senders the user allows (RFC-005). -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
     <application
         android:name=".ChimuApp"
@@ -26,6 +30,27 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Reads notifications of the apps the user turns on. The user grants "Notification access" in system settings (RFC-005). -->
+        <service
+            android:name=".PaymentListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Only the system may send this broadcast (BROADCAST_SMS), and it arrives only while RECEIVE_SMS is granted (RFC-005). -->
+        <receiver
+            android:name=".SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Lets the camera app write one receipt photo into this app's cache (RFC-004). Not exported. -->
         <provider
