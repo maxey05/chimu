@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.chimu.Categories
 import com.chimu.ChimuApp
+import com.chimu.InboxRules
 import com.chimu.Ledger
 import com.chimu.Money
 import com.chimu.Txn
@@ -52,7 +53,10 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** Add (id = [NEW_ID]) or edit an expense, income or transfer. */
+/**
+ * Add (id = [NEW_ID]) or edit an expense, income or transfer. The same form also checks a scanned
+ * receipt (RFC-004) and an auto-logged Inbox payment (RFC-005); both are saved through "confirm".
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
@@ -61,7 +65,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
     val isNew = txnId == NEW_ID
 
     // The entry as it was when the form opened. Later list updates must not overwrite what is being typed.
-    val existing = remember(txnId) { repo.txns.value.firstOrNull { it.id == txnId } }
+    val existing = remember(txnId) { repo.find(txnId) }
     if (!isNew && existing == null) {
         Column(Modifier.fillMaxSize()) {
             FormHeader("Entry", onBack = onClose)
@@ -72,7 +76,12 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
 
     // A scanned receipt that the user hasn't confirmed yet opens as a check-and-save screen (RFC-004).
     val isReview = existing != null && existing.source == "receipt" && existing.status != "confirmed"
+
+    // A payment read from a notification or SMS that the user hasn't confirmed yet (RFC-005). Saving confirms it.
+    val isInbox = existing != null && InboxRules.isInbox(existing)
+    val needsCheck = isReview || isInbox
     val txns by repo.txns.collectAsState()
+    val inboxRows by repo.inbox.collectAsState()
 
     val activeWallets = allWallets.filter { !it.deleted }
     var typeSlug by rememberSaveable(txnId) { mutableStateOf(existing?.type?.slug ?: TxnType.EXPENSE.slug) }
@@ -80,7 +89,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
     var toWalletId by rememberSaveable(txnId) { mutableStateOf(existing?.toWalletId) }
     var category by rememberSaveable(txnId) { mutableStateOf(existing?.category ?: Categories.OTHER) }
     var date by rememberSaveable(txnId) { mutableStateOf(existing?.date ?: LocalDate.now().toString()) }
-    var amountText by rememberSaveable(txnId) { mutableStateOf(existing?.let { if (isReview && it.amount == 0L) "" else Money.plain(it.amount) } ?: "") }
+    var amountText by rememberSaveable(txnId) { mutableStateOf(existing?.let { if (needsCheck && it.amount == 0L) "" else Money.plain(it.amount) } ?: "") }
     var merchant by rememberSaveable(txnId) { mutableStateOf(existing?.merchant.orEmpty()) }
     var note by rememberSaveable(txnId) { mutableStateOf(existing?.note.orEmpty()) }
     var isBusiness by rememberSaveable(txnId) { mutableStateOf(existing?.isBusiness ?: false) }
@@ -95,7 +104,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
     val walletChoices = activeWallets.map { Choice(it.id, it.name) }
 
     // An existing payment this receipt may belong to. Re-checked as the amount or date are corrected.
-    val match = remember(txns, amountText, date, type) {
+    val match = remember(txns, inboxRows, amountText, date, type) {
         if (isReview && existing != null && type == TxnType.EXPENSE) {
             Money.parse(amountText)?.takeIf { it > 0L }?.let { repo.matchFor(existing.id, it, date) }
         } else {
@@ -145,7 +154,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
         saving = true
         scope.launch {
             try {
-                if (isReview) repo.confirmTxn(txn) else repo.saveTxn(txn)
+                if (needsCheck) repo.confirmTxn(txn) else repo.saveTxn(txn)
                 onClose()
             } catch (e: CancellationException) {
                 throw e
@@ -164,10 +173,28 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
             .imePadding()
             .verticalScroll(rememberScrollState()),
     ) {
-        FormHeader(if (isNew) "Add entry" else if (isReview) "Check receipt" else "Edit entry", onBack = onClose)
+        FormHeader(
+            if (isNew) "Add entry" else if (isInbox) "Check payment" else if (isReview) "Check receipt" else "Edit entry",
+            onBack = onClose,
+        )
 
         if (existing != null && (!existing.localPhoto.isNullOrEmpty() || !existing.receiptPath.isNullOrEmpty())) {
             ReceiptPhoto(app, existing, Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        }
+        if (isInbox && existing != null) {
+            val unread = InboxRules.isUnread(existing)
+            Text(
+                if (unread) {
+                    "Chimu couldn't read this message. Fill in the details yourself and confirm, or dismiss it."
+                } else {
+                    "${InboxRules.sourceLabel(existing)}. Check every field, fix anything that is wrong, then confirm. It stays on this phone until you confirm it."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            existing.rawText?.takeIf { it.isNotBlank() }?.let {
+                Text("Message: $it", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            }
         }
         if (isReview && existing != null) {
             Text(
@@ -236,9 +263,9 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 onValueChange = { amountText = it },
                 label = { Text("Amount") },
                 prefix = { Text("₱") },
-                isError = isReview && amountText.isBlank(),
-                supportingText = if (isReview && amountText.isBlank()) {
-                    { Text("Not found on the receipt. Enter the amount.") }
+                isError = needsCheck && amountText.isBlank(),
+                supportingText = if (needsCheck && amountText.isBlank()) {
+                    { Text(if (isInbox) "Not found in the message. Enter the amount." else "Not found on the receipt. Enter the amount.") }
                 } else {
                     null
                 },
@@ -275,8 +302,11 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                     choices = Categories.forType(type).map { Choice(it.slug, it.label) },
                     onSelect = { category = it ?: Categories.OTHER },
                 )
-                if (isReview && existing?.category == null) {
-                    Text("The category wasn't found on the receipt. Choose one.", style = MaterialTheme.typography.bodyMedium)
+                if (needsCheck && existing?.category == null) {
+                    Text(
+                        if (isInbox) "Chimu doesn't guess the category. Choose one." else "The category wasn't found on the receipt. Choose one.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
 
@@ -295,10 +325,10 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
-                    label = { Text(if (isReview) "Merchant" else "Merchant (optional)") },
-                    isError = isReview && merchant.isBlank(),
-                    supportingText = if (isReview && merchant.isBlank()) {
-                        { Text("Not found on the receipt.") }
+                    label = { Text(if (needsCheck) "Merchant" else "Merchant (optional)") },
+                    isError = needsCheck && merchant.isBlank(),
+                    supportingText = if (needsCheck && merchant.isBlank()) {
+                        { Text(if (isInbox) "Not found in the message." else "Not found on the receipt.") }
                     } else {
                         null
                     },
@@ -340,7 +370,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
             ) {
-                Text(if (saving) "Saving…" else if (isReview) "Save as checked" else "Save")
+                Text(if (saving) "Saving…" else if (isInbox) "Confirm payment" else if (isReview) "Save as checked" else "Save")
             }
             if (!isNew) {
                 OutlinedButton(
@@ -348,7 +378,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                     enabled = !saving,
                     modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
                 ) {
-                    Text("Delete this entry")
+                    Text(if (isInbox) "Dismiss this payment" else "Delete this entry")
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -376,15 +406,23 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete this entry?") },
-            text = { Text("It will no longer count toward your balances or totals.") },
+            title = { Text(if (isInbox) "Dismiss this payment?" else "Delete this entry?") },
+            text = {
+                Text(
+                    if (isInbox) {
+                        "It is removed from this phone for good. It was never sent anywhere, so it can't be brought back."
+                    } else {
+                        "It will no longer count toward your balances or totals."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmDelete = false
                         scope.launch {
                             try {
-                                repo.deleteTxn(txnId)
+                                if (isInbox) repo.dismissInbox(txnId) else repo.deleteTxn(txnId)
                                 onClose()
                             } catch (e: CancellationException) {
                                 throw e
@@ -393,7 +431,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                             }
                         }
                     },
-                ) { Text("Delete") }
+                ) { Text(if (isInbox) "Dismiss" else "Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep it") } },
         )

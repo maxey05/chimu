@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.chimu.ChimuApp
 import com.chimu.Identity
+import com.chimu.InboxRules
 import com.chimu.Ledger
 import com.chimu.Money
 import com.chimu.ReceiptPhotos
@@ -49,8 +50,12 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit) {
+fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: () -> Unit, onAutoLog: () -> Unit) {
     val txns by app.repo.txns.collectAsState()
+    val inbox by app.repo.inbox.collectAsState()
+    val enabledApps by app.autoLog.enabledPackages.collectAsState()
+    val senders by app.autoLog.senders.collectAsState()
+    val onboardingDismissed by app.autoLog.onboardingDismissed.collectAsState()
     val sync by app.sync.status.collectAsState()
     val month = remember { YearMonth.now().toString() } // `2026-11`, the same shape as a stored date's first 7 characters
     val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
@@ -89,6 +94,11 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit) {
                 }
             }
 
+            if (inbox.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                InboxCard(inbox.size, onInbox)
+            }
+
             Spacer(Modifier.height(24.dp))
             Button(
                 onClick = onAdd,
@@ -107,8 +117,52 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit) {
             scanner.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
             ErrorText(scanner.error, Modifier.padding(top = 8.dp))
 
+            if (enabledApps.isEmpty() && senders.isEmpty() && !onboardingDismissed) {
+                Spacer(Modifier.height(24.dp))
+                AutoLogCard(onSetUp = onAutoLog, onNotNow = { app.autoLog.dismissOnboarding() })
+            }
+
             Spacer(Modifier.height(24.dp))
             SyncCard(sync, onSyncNow = { app.sync.requestNow() })
+        }
+    }
+}
+
+/** The Inbox badge (RFC-005): how many auto-logged payments wait for a check. The count is written out, not just a dot. */
+@Composable
+private fun InboxCard(count: Int, onOpen: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Inbox", style = MaterialTheme.typography.labelLarge)
+            Text(InboxRules.badge(count), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 4.dp))
+            Text(
+                "Read from your notifications and SMS. They stay on this phone until you confirm them.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
+                Text("Open Inbox")
+            }
+        }
+    }
+}
+
+/** The onboarding card (RFC-005): says what auto-logging reads and that unconfirmed items stay on the phone. Shown until the user sets it up or says not now. */
+@Composable
+private fun AutoLogCard(onSetUp: () -> Unit, onNotNow: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Log payments automatically", style = MaterialTheme.typography.labelLarge)
+            Text(AUTO_LOG_HOME_TEXT, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onSetUp, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
+                Text("Set up")
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onNotNow, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
+                Text("Not now")
+            }
         }
     }
 }
@@ -138,23 +192,6 @@ private fun SyncCard(status: SyncStatus, onSyncNow: () -> Unit) {
                 Text("Sync now")
             }
         }
-    }
-}
-
-/** The Group tab is a placeholder until RFC-006. */
-@Composable
-fun GroupScreen() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-    ) {
-        Text("Group", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Tracking groups are coming in a later update. For now everything you log is just yours.",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(top = 12.dp),
-        )
     }
 }
 

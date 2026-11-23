@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,7 +35,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit) {
+fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit, onInbox: () -> Unit, onAutoLog: () -> Unit) {
+    val inbox by app.repo.inbox.collectAsState()
     var confirmSignOut by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -59,6 +61,28 @@ fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Wallets", style = MaterialTheme.typography.bodyLarge)
+        }
+        HorizontalDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onInbox)
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(if (inbox.isEmpty()) "Inbox" else "Inbox (${inbox.size} to check)", style = MaterialTheme.typography.bodyLarge)
+        }
+        HorizontalDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onAutoLog)
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Auto-log payments", style = MaterialTheme.typography.bodyLarge)
         }
         HorizontalDivider()
 

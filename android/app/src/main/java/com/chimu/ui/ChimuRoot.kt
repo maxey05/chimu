@@ -38,8 +38,13 @@ const val NEW_ID = "new"
 private const val HOME = "home"
 private const val TRANSACTIONS = "transactions"
 private const val GROUP = "group"
+private const val GROUP_CREATE = "group_create"
+private const val GROUP_JOIN = "group_join"
+private const val GROUP_TXN = "group_txn"
 private const val MORE = "more"
 private const val WALLETS = "wallets"
+private const val INBOX = "inbox"
+private const val AUTO_LOG = "autolog"
 private const val TXN_FORM = "txn"
 private const val WALLET_FORM = "wallet"
 
@@ -117,7 +122,13 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
     ) { padding ->
         NavHost(nav, startDestination = HOME, modifier = Modifier.padding(padding)) {
             composable(HOME) {
-                HomeScreen(app, identity, onAdd = { nav.navigate("$TXN_FORM/$NEW_ID") })
+                HomeScreen(
+                    app,
+                    identity,
+                    onAdd = { nav.navigate("$TXN_FORM/$NEW_ID") },
+                    onInbox = { nav.navigate(INBOX) },
+                    onAutoLog = { nav.navigate(AUTO_LOG) },
+                )
             }
             composable(TRANSACTIONS) {
                 TransactionsScreen(
@@ -126,8 +137,41 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     onOpen = { id -> nav.navigate("$TXN_FORM/$id") },
                 )
             }
-            composable(GROUP) { GroupScreen() }
-            composable(MORE) { MoreScreen(app, identity, onWallets = { nav.navigate(WALLETS) }) }
+            composable(GROUP) {
+                GroupScreen(
+                    app,
+                    onCreate = { nav.navigate(GROUP_CREATE) },
+                    onJoin = { nav.navigate(GROUP_JOIN) },
+                    onOpenOwn = { id -> nav.navigate("$TXN_FORM/$id") },
+                    onOpenShared = { id -> nav.navigate("$GROUP_TXN/$id") },
+                )
+            }
+            composable(GROUP_CREATE) { CreateGroupScreen(app, onClose = { nav.popBackStack() }) }
+            composable(GROUP_JOIN) { JoinGroupScreen(app, onClose = { nav.popBackStack() }) }
+            composable(
+                route = "$GROUP_TXN/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                GroupTxnScreen(app, entry.arguments?.getString("id") ?: "", onClose = { nav.popBackStack() })
+            }
+            composable(MORE) {
+                MoreScreen(
+                    app,
+                    identity,
+                    onWallets = { nav.navigate(WALLETS) },
+                    onInbox = { nav.navigate(INBOX) },
+                    onAutoLog = { nav.navigate(AUTO_LOG) },
+                )
+            }
+            composable(INBOX) {
+                InboxScreen(
+                    app,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { id -> nav.navigate("$TXN_FORM/$id") },
+                    onAutoLog = { nav.navigate(AUTO_LOG) },
+                )
+            }
+            composable(AUTO_LOG) { AutoLogScreen(app, onBack = { nav.popBackStack() }) }
 
             composable(
                 route = "$TXN_FORM/{id}",
