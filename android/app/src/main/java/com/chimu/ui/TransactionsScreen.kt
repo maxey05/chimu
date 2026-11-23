@@ -34,6 +34,7 @@ import com.chimu.Categories
 import com.chimu.ChimuApp
 import com.chimu.Ledger
 import com.chimu.Money
+import com.chimu.ReceiptText
 import com.chimu.Txn
 import com.chimu.TxnFilter
 import com.chimu.TxnType
@@ -172,9 +173,11 @@ private fun TxnRow(app: ChimuApp, txn: Txn, onClick: () -> Unit) {
             Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
             Text(detail, style = MaterialTheme.typography.bodyMedium)
             Text(Ledger.dateLabel(txn.date), style = MaterialTheme.typography.bodySmall)
+            // A scan says where it stands in words, so it never depends on colour (RULES 21).
+            ReceiptText.listNote(txn)?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
         }
         Text(
-            Money.formatSigned(txn.type, txn.amount),
+            ReceiptText.listAmount(txn),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.End,
             modifier = Modifier.padding(start = 12.dp),

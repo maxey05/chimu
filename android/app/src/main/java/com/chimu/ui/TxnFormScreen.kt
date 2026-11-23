@@ -70,13 +70,17 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
         return
     }
 
+    // A scanned receipt that the user hasn't confirmed yet opens as a check-and-save screen (RFC-004).
+    val isReview = existing != null && existing.source == "receipt" && existing.status != "confirmed"
+    val txns by repo.txns.collectAsState()
+
     val activeWallets = allWallets.filter { !it.deleted }
     var typeSlug by rememberSaveable(txnId) { mutableStateOf(existing?.type?.slug ?: TxnType.EXPENSE.slug) }
     var walletId by rememberSaveable(txnId) { mutableStateOf(existing?.walletId ?: activeWallets.firstOrNull()?.id) }
     var toWalletId by rememberSaveable(txnId) { mutableStateOf(existing?.toWalletId) }
     var category by rememberSaveable(txnId) { mutableStateOf(existing?.category ?: Categories.OTHER) }
     var date by rememberSaveable(txnId) { mutableStateOf(existing?.date ?: LocalDate.now().toString()) }
-    var amountText by rememberSaveable(txnId) { mutableStateOf(existing?.let { Money.plain(it.amount) } ?: "") }
+    var amountText by rememberSaveable(txnId) { mutableStateOf(existing?.let { if (isReview && it.amount == 0L) "" else Money.plain(it.amount) } ?: "") }
     var merchant by rememberSaveable(txnId) { mutableStateOf(existing?.merchant.orEmpty()) }
     var note by rememberSaveable(txnId) { mutableStateOf(existing?.note.orEmpty()) }
     var isBusiness by rememberSaveable(txnId) { mutableStateOf(existing?.isBusiness ?: false) }
@@ -89,6 +93,15 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
 
     val type = TxnType.fromSlug(typeSlug)
     val walletChoices = activeWallets.map { Choice(it.id, it.name) }
+
+    // An existing payment this receipt may belong to. Re-checked as the amount or date are corrected.
+    val match = remember(txns, amountText, date, type) {
+        if (isReview && existing != null && type == TxnType.EXPENSE) {
+            Money.parse(amountText)?.takeIf { it > 0L }?.let { repo.matchFor(existing.id, it, date) }
+        } else {
+            null
+        }
+    }
 
     fun save() {
         error = null
@@ -132,7 +145,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
         saving = true
         scope.launch {
             try {
-                repo.saveTxn(txn)
+                if (isReview) repo.confirmTxn(txn) else repo.saveTxn(txn)
                 onClose()
             } catch (e: CancellationException) {
                 throw e
@@ -151,7 +164,49 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
             .imePadding()
             .verticalScroll(rememberScrollState()),
     ) {
-        FormHeader(if (isNew) "Add entry" else "Edit entry", onBack = onClose)
+        FormHeader(if (isNew) "Add entry" else if (isReview) "Check receipt" else "Edit entry", onBack = onClose)
+
+        if (existing != null && (!existing.localPhoto.isNullOrEmpty() || !existing.receiptPath.isNullOrEmpty())) {
+            ReceiptPhoto(app, existing, Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        }
+        if (isReview && existing != null) {
+            Text(
+                when {
+                    existing.status == "pending" && existing.extractError != null ->
+                        "The receipt couldn't be read: ${existing.extractError} Fill it in yourself and save."
+                    existing.status == "pending" ->
+                        "Waiting to be read. It is read when the phone is online. You can fill it in yourself now."
+                    else -> "Read from the receipt. Check every field, fix anything that is wrong, then save."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            if (match != null) {
+                ReceiptMatchCard(
+                    match = match,
+                    busy = saving,
+                    onAttach = {
+                        saving = true
+                        scope.launch {
+                            try {
+                                if (repo.attachScan(existing.id, match.id)) {
+                                    onClose()
+                                } else {
+                                    error = "Couldn't attach the receipt. That payment may already have a photo."
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                error = "Couldn't attach the receipt. Nothing was changed, so try again. (${e.message})"
+                            } finally {
+                                saving = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+        }
 
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -181,6 +236,12 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 onValueChange = { amountText = it },
                 label = { Text("Amount") },
                 prefix = { Text("₱") },
+                isError = isReview && amountText.isBlank(),
+                supportingText = if (isReview && amountText.isBlank()) {
+                    { Text("Not found on the receipt. Enter the amount.") }
+                } else {
+                    null
+                },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
@@ -214,6 +275,9 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                     choices = Categories.forType(type).map { Choice(it.slug, it.label) },
                     onSelect = { category = it ?: Categories.OTHER },
                 )
+                if (isReview && existing?.category == null) {
+                    Text("The category wasn't found on the receipt. Choose one.", style = MaterialTheme.typography.bodyMedium)
+                }
             }
 
             // Date
@@ -231,7 +295,13 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
-                    label = { Text("Merchant (optional)") },
+                    label = { Text(if (isReview) "Merchant" else "Merchant (optional)") },
+                    isError = isReview && merchant.isBlank(),
+                    supportingText = if (isReview && merchant.isBlank()) {
+                        { Text("Not found on the receipt.") }
+                    } else {
+                        null
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
                 )
@@ -270,7 +340,7 @@ fun TxnFormScreen(app: ChimuApp, txnId: String, onClose: () -> Unit) {
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
             ) {
-                Text(if (saving) "Saving…" else "Save")
+                Text(if (saving) "Saving…" else if (isReview) "Save as checked" else "Save")
             }
             if (!isNew) {
                 OutlinedButton(
