@@ -12,6 +12,8 @@ class FakeLocal : SyncLocal {
 
     val photoFiles = mutableMapOf<String, ByteArray>()
     var members: List<Row> = emptyList()
+    var groups: List<Row> = emptyList()
+    var profiles: List<Row> = emptyList()
     val cursors = mutableMapOf<String, Long>()
     var cacheOwnerValue: String? = null
     var clock = 5_000_000L
@@ -134,6 +136,14 @@ class FakeLocal : SyncLocal {
         members = rows.map { it.toMap() }
     }
 
+    override fun replaceGroups(rows: List<Row>) {
+        groups = rows.map { it.toMap() }
+    }
+
+    override fun replaceProfiles(rows: List<Row>) {
+        profiles = rows.map { it.toMap() }
+    }
+
     override fun wipeOthers(owner: String) {
         tables.values.forEach { rows -> rows.values.removeAll { it["owner_id"] != owner && it["dirty"] != true } }
     }
@@ -169,6 +179,10 @@ class FakeRemote(private val caller: String) : SyncRemote {
     /** Other owners whose rows the caller can read (they share a group with the caller). */
     val visibleOwners = mutableSetOf<String>()
     var memberRows: List<Row> = emptyList()
+
+    /** What the caller may read from `groups` and `profiles` (RLS: their own groups, and the names of the people in them). */
+    var groupRows: List<Row> = emptyList()
+    var profileRows: List<Row> = emptyList()
     val uploads = mutableMapOf<String, ByteArray>()
 
     /** Every `upsert`: table name and how many rows were sent. */
@@ -234,7 +248,10 @@ class FakeRemote(private val caller: String) : SyncRemote {
         if (rows.any { it["id"] in rejectIds }) throw SyncRejected(400, "check constraint failed")
         if (rows.any { it["owner_id"] != caller }) throw SyncRejected(403, "row-level security")
         // The phone must never send the pull cursor or its own bookkeeping columns.
-        rows.forEach { row -> check("rev" !in row && "dirty" !in row && "status" !in row && "local_photo" !in row && "extract_error" !in row) }
+        rows.forEach { row ->
+            check("rev" !in row && "dirty" !in row && "status" !in row && "local_photo" !in row && "extract_error" !in row)
+            check("raw_text" !in row && "captured_at" !in row) // phone-only since RFC-005
+        }
         val stored = rows.map { store(table, it) }.map { it.toMap() }
         afterStore?.invoke()
         return stored
@@ -253,6 +270,16 @@ class FakeRemote(private val caller: String) : SyncRemote {
     override suspend fun members(): List<Row> {
         gate()
         return memberRows.map { it.toMap() }
+    }
+
+    override suspend fun groups(): List<Row> {
+        gate()
+        return groupRows.map { it.toMap() }
+    }
+
+    override suspend fun profiles(): List<Row> {
+        gate()
+        return profileRows.map { it.toMap() }
     }
 
     override suspend fun uploadPhoto(path: String, bytes: ByteArray) {
