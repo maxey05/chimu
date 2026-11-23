@@ -27,6 +27,7 @@ class Db(context: Context) :
         // Each step runs in the same change as the matching Supabase migration (if any) and the
         // DESIGN.md update (RULES 11). Steps are cumulative, so an old install walks through all of them.
         if (oldVersion < 2) Schema.UPGRADE_1_TO_2.forEach { db.execSQL(it) }
+        if (oldVersion < 3) Schema.UPGRADE_2_TO_3.forEach { db.execSQL(it) }
     }
 
     // --- wallets -------------------------------------------------------------
@@ -60,10 +61,13 @@ class Db(context: Context) :
 
     // --- transactions --------------------------------------------------------
 
-    /** [ownerId]'s live (non-deleted) transactions. Tombstones stay in the table for sync. */
+    /**
+     * [ownerId]'s live (non-deleted) transactions, without the unconfirmed Inbox items (see [inboxTxns]),
+     * so lists, totals and balances never count a payment the user has not confirmed. Tombstones stay in the table for sync.
+     */
     fun txns(ownerId: String): List<Txn> =
         readableDatabase.query(
-            "transactions", null, "owner_id = ? AND deleted = 0", arrayOf(ownerId), null, null, null,
+            "transactions", null, InboxSql.LIVE_WHERE, arrayOf(ownerId), null, null, null,
         ).use { c -> buildList { while (c.moveToNext()) add(c.toTxn()) } }
 
     fun insertTxn(txn: Txn) {
@@ -73,6 +77,8 @@ class Db(context: Context) :
             put("source", txn.source)
             put("status", txn.status)
             put("local_photo", txn.localPhoto) // set for a scan (RFC-004); null for a manual entry
+            put("raw_text", txn.rawText) // set for an Inbox item (RFC-005)
+            putLong("captured_at", txn.capturedAt)
         }
         writableDatabase.insertOrThrow("transactions", null, values)
     }
@@ -105,14 +111,15 @@ class Db(context: Context) :
         ).use { c -> if (c.moveToFirst()) c.toTxn() else null }
 
     /**
-     * Saves the Review screen: the edit fields plus `status = confirmed`, and clears any extraction
-     * error. The receipt, VAT and invoice columns stay as the reader filled them. A normal edit
+     * Saves the Review screen or an Inbox item: the edit fields plus `status = confirmed`, and clears any extraction
+     * error and the stored message text. For an Inbox item this is the moment it starts to sync (`dirty = 1`). The receipt, VAT and invoice columns stay as the reader filled them. A normal edit
      * (`updated_at` now, `dirty = 1`) so it syncs.
      */
     fun confirmTxn(txn: Txn) {
         val values = txnEditValues(txn, System.currentTimeMillis()).apply {
             put("status", "confirmed")
             putNull("extract_error")
+            putNull("raw_text") // the message text was only for checking the item; it is not kept once confirmed
         }
         writableDatabase.update("transactions", values, "id = ? AND owner_id = ?", arrayOf(txn.id, txn.ownerId))
     }
@@ -159,6 +166,32 @@ class Db(context: Context) :
             db.endTransaction()
         }
     }
+
+    // --- inbox (RFC-005) -----------------------------------------------------
+
+    /** [ownerId]'s unconfirmed auto-logged items, newest message first. They are never pushed (RULES 17). */
+    fun inboxTxns(ownerId: String): List<Txn> =
+        readableDatabase.query(
+            "transactions", null, InboxSql.INBOX_WHERE, arrayOf(ownerId), null, null, "captured_at DESC, updated_at DESC",
+        ).use { c -> buildList { while (c.moveToNext()) add(c.toTxn()) } }
+
+    /**
+     * Rows of [ownerId] that may be the same payment as a new message: seen at or after [sinceMs], or
+     * (when [refNo] is given) carrying that reference number. Any status, so a confirmed payment is found too.
+     */
+    fun dedupCandidates(ownerId: String, refNo: String?, sinceMs: Long): List<Txn> {
+        val args = if (refNo == null) arrayOf(ownerId, sinceMs.toString()) else arrayOf(ownerId, sinceMs.toString(), refNo)
+        return readableDatabase.query(
+            "transactions", null, InboxSql.dedupWhere(refNo != null), args, null, null, null,
+        ).use { c -> buildList { while (c.moveToNext()) add(c.toTxn()) } }
+    }
+
+    /**
+     * "Dismiss": deletes an Inbox item for good. Allowed because it never synced (RULES 9); the
+     * `status = 'inbox'` guard means a confirmed or synced row can never be removed this way. False if there was no such item.
+     */
+    fun dismissInbox(ownerId: String, id: String): Boolean =
+        writableDatabase.delete("transactions", InboxSql.DISMISS_WHERE, arrayOf(id, ownerId)) > 0
 
     // --- receipt scanning (RFC-004) ------------------------------------------
 
@@ -220,7 +253,7 @@ class Db(context: Context) :
     /**
      * Stores rows from the server, each one only when [Lww.shouldApply] says the server copy is at
      * least as new as ours. A stored row takes the server's `rev` and loses its `dirty` flag. The
-     * phone-only columns (`status`, `local_photo`, `extract_error`) are left alone on update. One transaction.
+     * phone-only columns (`status`, `local_photo`, `extract_error`, `raw_text`, `captured_at`) are left alone on update. One transaction.
      * Returns how many rows were stored.
      */
     fun applyRemote(table: SyncTable, rows: List<Row>): Int {
@@ -292,6 +325,76 @@ class Db(context: Context) :
             db.endTransaction()
         }
     }
+
+    // --- groups (RFC-006) ----------------------------------------------------
+    // Groups, memberships and names are a read-only cache, replaced wholesale from the server on every
+    // sync. Nothing on the phone writes them: membership changes go through the RPCs only (RULES 16).
+
+    /** Replaces the cached groups. */
+    fun replaceGroups(rows: List<Row>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("groups", null, null)
+            for (row in rows) {
+                val values = ContentValues().apply {
+                    put("id", row["id"] as String)
+                    put("name", row["name"] as String)
+                    put("invite_code", row["invite_code"] as String)
+                    put("owner_id", row["owner_id"] as String)
+                    put("created_at", row["created_at"] as String?)
+                    put("dirty", 0)
+                }
+                db.insertOrThrow("groups", null, values)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Replaces the cached display names. */
+    fun replaceProfiles(rows: List<Row>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("profiles", null, null)
+            for (row in rows) {
+                val values = ContentValues().apply {
+                    put("id", row["id"] as String)
+                    put("display_name", (row["display_name"] as String?).orEmpty())
+                    put("dirty", 0)
+                }
+                db.insertOrThrow("profiles", null, values)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun cachedGroups(): List<Group> =
+        readableDatabase.query("groups", null, null, null, null, null, null)
+            .use { c -> buildList { while (c.moveToNext()) add(Group(c.text("id"), c.text("name"), c.text("invite_code"), c.text("owner_id"))) } }
+
+    fun cachedMemberships(): List<Membership> =
+        readableDatabase.query("group_members", arrayOf("group_id", "user_id", "role"), null, null, null, null, null)
+            .use { c -> buildList { while (c.moveToNext()) add(Membership(c.text("group_id"), c.text("user_id"), c.text("role"))) } }
+
+    /** User id to display name; blank names are left out. */
+    fun cachedNames(): Map<String, String> =
+        readableDatabase.query("profiles", arrayOf("id", "display_name"), null, null, null, null, null)
+            .use { c -> buildMap { while (c.moveToNext()) c.text("display_name").takeIf { it.isNotBlank() }?.let { put(c.text("id"), it) } } }
+
+    /** Every cached live transaction of every owner, own and other members', never an Inbox item. The caller narrows it to the user's groups ([GroupRules.snapshot]). */
+    fun cachedTxns(): List<Txn> =
+        readableDatabase.query("transactions", null, GroupSql.CACHED_TXNS_WHERE, null, null, null, null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.toTxn()) } }
+
+    /** Every cached wallet of every owner, archived ones included, so a member's old entries still show a wallet name. */
+    fun cachedWallets(): List<Wallet> =
+        readableDatabase.query("wallets", null, null, null, null, null, null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.toWallet()) } }
 
     /**
      * Drops cached rows that belong to anyone but [ownerId]. Rows with unsynced edits are kept, so
@@ -398,6 +501,8 @@ class Db(context: Context) :
         vatExempt = numberOrNull("vat_exempt"),
         localPhoto = textOrNull("local_photo"),
         extractError = textOrNull("extract_error"),
+        rawText = textOrNull("raw_text"),
+        capturedAt = numberOrNull("captured_at"),
     )
 
     private fun Cursor.text(column: String): String = getString(getColumnIndexOrThrow(column))

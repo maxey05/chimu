@@ -113,4 +113,8 @@ data class Txn(
     val localPhoto: String? = null,
     /** Phone only: why the last try at reading this scan failed. Null if it has not failed. */
     val extractError: String? = null,
+    /** Phone only: the cleaned notification or SMS text an Inbox item came from. Dropped once the user confirms the item (RFC-005). */
+    val rawText: String? = null,
+    /** Phone only: when the message arrived, epoch ms. Lets the same payment seen twice be recognised (RFC-005). */
+    val capturedAt: Long? = null,
 )
