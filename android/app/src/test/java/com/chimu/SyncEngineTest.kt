@@ -249,8 +249,8 @@ class SyncEngineTest {
         remote.serverWrite(wallets, wallet("w1"))
         remote.serverWrite(txns, txn("t1"))
         val local = FakeLocal()
-        // members (1) + wallets pull (1) succeed, then the transactions pull fails
-        remote.callsUntilOffline = 2
+        // members, groups, profiles (3) + wallets pull (1) succeed, then the transactions pull fails
+        remote.callsUntilOffline = 4
 
         syncFails(local, remote)
 

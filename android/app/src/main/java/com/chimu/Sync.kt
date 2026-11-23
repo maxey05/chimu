@@ -43,6 +43,12 @@ interface SyncLocal {
 
     fun replaceMembers(rows: List<Row>)
 
+    /** Replaces the cached groups with [rows] (`id`, `name`, `invite_code`, `owner_id`, `created_at`). RFC-006. */
+    fun replaceGroups(rows: List<Row>)
+
+    /** Replaces the cached display names with [rows] (`id`, `display_name`). RFC-006. */
+    fun replaceProfiles(rows: List<Row>)
+
     /** Forgets cached rows that belong to anyone but [owner], except rows with unsynced edits. */
     fun wipeOthers(owner: String)
 
@@ -69,6 +75,12 @@ interface SyncRemote {
 
     /** Every `group_members` row the caller can see (`group_id`, `user_id`, `role`, `joined_at`). */
     suspend fun members(): List<Row>
+
+    /** Every group the caller is in (`id`, `name`, `invite_code`, `owner_id`, `created_at`). RFC-006. */
+    suspend fun groups(): List<Row>
+
+    /** The caller's profile and those of everyone they share a group with (`id`, `display_name`). RFC-006. */
+    suspend fun profiles(): List<Row>
 
     suspend fun uploadPhoto(path: String, bytes: ByteArray)
 
@@ -109,7 +121,7 @@ data class SyncReport(
  * 3. **Reading** (RFC-004): ask `extract` to read each scan whose photo is up, fill the row, then push
  *    those rows again. Needs the photo to be on the server first, so it comes after step 2.
  * 4. **Membership**: if the visible group members changed, forget other people's cached rows and
- *    start the pull cursors over.
+ *    start the pull cursors over. Groups and display names are refreshed here too (RFC-006).
  * 5. **Pull** each table's rows with `rev > last_rev` and apply them with [Lww].
  *
  * Nothing here deletes or un-dirties a row on a failure (RULES 20): `dirty` is cleared only by
@@ -232,16 +244,27 @@ class SyncEngine(
         return filled
     }
 
+    /**
+     * Step 4 of the protocol, and the full re-pull of RFC-006: after a group is created, joined or left,
+     * or a member is removed, the server's memberships differ from the cached ones, so the cursors start
+     * over and other people's cached rows are dropped; the pull that follows brings back exactly what
+     * the user may see now. Groups and names are fetched with the memberships, before anything on the phone
+     * changes, so a failure leaves the cache as it was.
+     */
     private suspend fun refreshMembership(owner: String) {
-        val rows = remote.members()
-        val remoteKeys = rows.map(::memberKey).toSet()
+        val members = remote.members()
+        val groups = remote.groups()
+        val profiles = remote.profiles()
+        val remoteKeys = members.map(::memberKey).toSet()
         if (remoteKeys != local.cachedMembers()) {
             // Order matters if the app dies halfway: the cache is replaced last, so the next sync
             // sees the difference again and finishes the job.
             local.resetCursors()
             local.wipeOthers(owner)
         }
-        local.replaceMembers(rows)
+        local.replaceGroups(groups)
+        local.replaceProfiles(profiles)
+        local.replaceMembers(members)
     }
 
     private suspend fun pull(table: SyncTable, run: Run) {

@@ -36,6 +36,10 @@ class LocalStore(private val db: Db, private val prefs: SharedPreferences) : Syn
 
     override fun replaceMembers(rows: List<Row>) = db.replaceMembers(rows)
 
+    override fun replaceGroups(rows: List<Row>) = db.replaceGroups(rows)
+
+    override fun replaceProfiles(rows: List<Row>) = db.replaceProfiles(rows)
+
     override fun wipeOthers(owner: String) = db.wipeOthers(owner)
 
     override fun cursor(table: SyncTable): Long = prefs.getLong(cursorKey(table), 0L)
