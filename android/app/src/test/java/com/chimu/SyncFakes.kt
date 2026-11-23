@@ -30,6 +30,7 @@ class FakeLocal : SyncLocal {
         stored["dirty"] = dirty
         stored["status"] = status
         stored["local_photo"] = localPhoto
+        stored["extract_error"] = null
         table(table)[row["id"] as String] = stored
     }
 
@@ -66,6 +67,7 @@ class FakeLocal : SyncLocal {
             stored["dirty"] = false
             stored["status"] = existing?.get("status") ?: "confirmed"
             stored["local_photo"] = existing?.get("local_photo")
+            stored["extract_error"] = existing?.get("extract_error")
             table(table)[id] = stored
             applied++
         }
@@ -87,6 +89,41 @@ class FakeLocal : SyncLocal {
         row["updated_at"] = ++clock
         row["dirty"] = true
         return true
+    }
+
+    override fun pendingExtractions(owner: String, includeFailed: Boolean): List<ExtractJob> =
+        table(SyncTables.transactions).values
+            .filter {
+                it["owner_id"] == owner && it["deleted"] == 0L && it["source"] == "receipt" && it["status"] == "pending" &&
+                    !(it["receipt_path"] as String?).isNullOrEmpty() && (includeFailed || it["extract_error"] == null)
+            }
+            .sortedWith(compareBy({ it["updated_at"] as Long }, { it["id"] as String }))
+            .map { ExtractJob(it["id"] as String, it["receipt_path"] as String) }
+
+    override fun applyExtraction(owner: String, txnId: String, receipt: ExtractedReceipt): Boolean {
+        val row = table(SyncTables.transactions)[txnId] ?: return false
+        if (row["owner_id"] != owner || row["deleted"] != 0L || row["status"] != "pending") return false
+        row["type"] = receipt.type.slug
+        if (receipt.amount != null) row["amount"] = receipt.amount
+        if (receipt.date != null) row["date"] = receipt.date
+        row["merchant"] = receipt.merchant
+        row["category"] = receipt.category
+        row["ref_no"] = receipt.refNo
+        row["seller_tin"] = receipt.sellerTin
+        row["invoice_no"] = receipt.invoiceNo
+        row["vatable_sales"] = receipt.vatableSales
+        row["vat"] = receipt.vat
+        row["vat_exempt"] = receipt.vatExempt
+        row["status"] = "extracted"
+        row["extract_error"] = null
+        row["updated_at"] = ++clock
+        row["dirty"] = true
+        return true
+    }
+
+    override fun markExtractionFailed(owner: String, txnId: String, message: String) {
+        val row = table(SyncTables.transactions)[txnId] ?: return
+        if (row["owner_id"] == owner && row["status"] == "pending") row["extract_error"] = message // phone only: no dirty, no updated_at
     }
 
     override fun readPhoto(localPhoto: String): ByteArray? = photoFiles[localPhoto]
@@ -147,6 +184,18 @@ class FakeRemote(private val caller: String) : SyncRemote {
     val rejectIds = mutableSetOf<String>()
     var rejectUploads = false
 
+    /** What the reader returns per photo path. A path with no entry is "unreadable" (a 422). */
+    val readings = mutableMapOf<String, ExtractedReceipt>()
+
+    /** Every photo path `extract` was asked to read, in order. */
+    val extractCalls = mutableListOf<String>()
+
+    /** Runs inside `extract`, after the reader has answered and before the phone gets the answer (the user can act in that gap). */
+    var duringExtract: (() -> Unit)? = null
+
+    /** When set, `extract` fails with this (e.g. a [SyncUnavailable] for "reader busy"). */
+    var extractFailure: Exception? = null
+
     /** Runs after the server stored an upsert and before the answer reaches the phone. */
     var afterStore: (() -> Unit)? = null
 
@@ -185,7 +234,7 @@ class FakeRemote(private val caller: String) : SyncRemote {
         if (rows.any { it["id"] in rejectIds }) throw SyncRejected(400, "check constraint failed")
         if (rows.any { it["owner_id"] != caller }) throw SyncRejected(403, "row-level security")
         // The phone must never send the pull cursor or its own bookkeeping columns.
-        rows.forEach { row -> check("rev" !in row && "dirty" !in row && "status" !in row && "local_photo" !in row) }
+        rows.forEach { row -> check("rev" !in row && "dirty" !in row && "status" !in row && "local_photo" !in row && "extract_error" !in row) }
         val stored = rows.map { store(table, it) }.map { it.toMap() }
         afterStore?.invoke()
         return stored
@@ -213,4 +262,16 @@ class FakeRemote(private val caller: String) : SyncRemote {
     }
 
     override suspend fun photoUrl(path: String): String = "https://example.test/signed/$path"
+
+    override suspend fun extract(path: String): ExtractedReceipt {
+        gate()
+        extractCalls += path
+        extractFailure?.let { throw it }
+        // Like the real function: the photo must be in this caller's own folder and in Storage.
+        if (!path.startsWith("$caller/")) throw SyncRejected(403, "That photo isn't yours.")
+        if (path !in uploads) throw SyncRejected(404, "That photo wasn't found.")
+        val reading = readings[path] ?: throw SyncRejected(422, "The receipt couldn't be read.")
+        duringExtract?.invoke()
+        return reading
+    }
 }

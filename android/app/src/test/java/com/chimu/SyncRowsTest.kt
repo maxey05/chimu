@@ -193,7 +193,7 @@ class SyncRowsTest {
     @Test
     fun everySyncedColumn_existsInThePhoneDatabase_andNothingIsForgotten() {
         val local = schemaColumns()
-        val phoneOnly = setOf("dirty", "status", "local_photo")
+        val phoneOnly = setOf("dirty", "status", "local_photo", "extract_error")
         for (table in SyncTables.inOrder) {
             val phone = local.getValue(table.name)
             val synced = table.columns.map { it.name }

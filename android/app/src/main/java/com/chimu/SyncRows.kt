@@ -195,6 +195,17 @@ object SyncSql {
     const val PHOTOS_WHERE =
         "owner_id = ? AND deleted = 0 AND status <> 'inbox' AND local_photo IS NOT NULL AND local_photo <> '' AND receipt_path IS NULL"
 
+    /**
+     * Scans whose photo is up and that still wait to be read. Args: owner id. A scan that failed
+     * (`extract_error` set) is only included when the caller asks to retry, see [extractWhere].
+     */
+    fun extractWhere(includeFailed: Boolean): String =
+        "owner_id = ? AND deleted = 0 AND source = 'receipt' AND status = 'pending' AND receipt_path IS NOT NULL AND receipt_path <> ''" +
+            if (includeFailed) "" else " AND extract_error IS NULL"
+
+    /** Guards [Db.applyExtraction]: the scan must still be waiting. Args: id, owner id. */
+    const val EXTRACT_APPLY_WHERE = "id = ? AND owner_id = ? AND deleted = 0 AND status = 'pending'"
+
     /** Guards [Db.setReceiptPath] so an existing path is never replaced. Args: id, owner id. */
     const val RECEIPT_PATH_WHERE = "id = ? AND owner_id = ? AND receipt_path IS NULL"
 }
