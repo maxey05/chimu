@@ -67,6 +67,72 @@ class SupaRemote(private val client: SupabaseClient) : SyncRemote {
         }
     }
 
+    override suspend fun groups(): List<Row> = guard {
+        val result = client.postgrest.from("groups").select(Columns.list("id", "name", "invite_code", "owner_id", "created_at"))
+        Json.parseToJsonElement(result.data).jsonArray.map { element ->
+            val obj = element.jsonObject
+            mapOf(
+                "id" to obj.getValue("id").jsonPrimitive.content,
+                "name" to obj.getValue("name").jsonPrimitive.content,
+                "invite_code" to obj.getValue("invite_code").jsonPrimitive.content,
+                "owner_id" to obj.getValue("owner_id").jsonPrimitive.content,
+                "created_at" to obj["created_at"]?.jsonPrimitive?.contentOrNull,
+            )
+        }
+    }
+
+    override suspend fun profiles(): List<Row> = guard {
+        val result = client.postgrest.from("profiles").select(Columns.list("id", "display_name"))
+        Json.parseToJsonElement(result.data).jsonArray.map { element ->
+            val obj = element.jsonObject
+            mapOf(
+                "id" to obj.getValue("id").jsonPrimitive.content,
+                "display_name" to (obj["display_name"]?.jsonPrimitive?.contentOrNull ?: ""),
+            )
+        }
+    }
+
+    // --- group RPCs (RFC-006). The only way a membership changes (RULES 16). ---------------------
+
+    suspend fun createGroup(name: String): Group =
+        groupFrom(rpc("create_group", buildJsonObject { put("name", JsonPrimitive(name)) }))
+
+    suspend fun joinGroup(code: String): Group =
+        groupFrom(rpc("join_group", buildJsonObject { put("code", JsonPrimitive(code)) }))
+
+    suspend fun leaveGroup(groupId: String) {
+        rpc("leave_group", buildJsonObject { put("group_id", JsonPrimitive(groupId)) })
+    }
+
+    suspend fun removeMember(groupId: String, userId: String) {
+        rpc(
+            "remove_member",
+            buildJsonObject {
+                put("group_id", JsonPrimitive(groupId))
+                put("user_id", JsonPrimitive(userId))
+            },
+        )
+    }
+
+    /** Calls a group function and returns its JSON answer (empty for `void`). A refusal comes back as [SyncRejected] with words for the user. */
+    private suspend fun rpc(function: String, params: kotlinx.serialization.json.JsonObject): String =
+        guard(describe = ::groupMessage) { client.postgrest.rpc(function, params).data }
+
+    private fun groupFrom(body: String): Group {
+        val parsed = Json.parseToJsonElement(body)
+        val obj = (if (parsed is kotlinx.serialization.json.JsonArray) parsed.first() else parsed).jsonObject
+        return Group(
+            id = obj.getValue("id").jsonPrimitive.content,
+            name = obj.getValue("name").jsonPrimitive.content,
+            inviteCode = obj.getValue("invite_code").jsonPrimitive.content,
+            ownerId = obj.getValue("owner_id").jsonPrimitive.content,
+        )
+    }
+
+    /** PostgREST sends the server's own message (`raise exception ...` in the RPC); [GroupText.serverWords] turns it into words. */
+    private fun groupMessage(e: RestException): String =
+        GroupText.serverWords(listOfNotNull(e.error, e.description).joinToString(" "))
+
     override suspend fun uploadPhoto(path: String, bytes: ByteArray) = guard {
         // upsert = true: a retry after a crash between the upload and recording the path must not fail.
         client.storage.from(BUCKET).upload(path, bytes) {
@@ -85,11 +151,27 @@ class SupaRemote(private val client: SupabaseClient) : SyncRemote {
         client.storage.from(BUCKET).downloadAuthenticated(path)
     }
 
-    override suspend fun extract(path: String): ExtractedReceipt {
+    override suspend fun extract(path: String): ExtractedReceipt =
+        callExtract(buildJsonObject { put("mode", JsonPrimitive("image")); put("path", JsonPrimitive(path)) }.toString())
+
+    /**
+     * Reads one notification or SMS with the same function in `text` mode (RFC-005). Only [text] and the
+     * source's name go over the wire. Errors are the same as [extract]: [SyncUnavailable] means try later.
+     */
+    suspend fun read(text: String, source: String): ExtractedReceipt =
+        callExtract(
+            buildJsonObject {
+                put("mode", JsonPrimitive("text"))
+                put("text", JsonPrimitive(text))
+                put("source", JsonPrimitive(source))
+            }.toString(),
+        )
+
+    private suspend fun callExtract(requestBody: String): ExtractedReceipt {
         val body = guard(describe = ::extractMessage) {
             client.functions.invoke("extract") {
                 contentType(ContentType.Application.Json)
-                setBody(buildJsonObject { put("mode", JsonPrimitive("image")); put("path", JsonPrimitive(path)) }.toString())
+                setBody(requestBody)
                 // The client's default request timeout is 10 s. Reading a photo takes longer than that.
                 timeout {
                     requestTimeoutMillis = EXTRACT_TIMEOUT_MS
@@ -145,4 +227,16 @@ class SupaRemote(private val client: SupabaseClient) : SyncRemote {
         /** Longer than the function's own 60 s wait for the model, so its answer is the one that gets back. */
         const val EXTRACT_TIMEOUT_MS = 75_000L
     }
+}
+
+/** [GroupApi] over the app's one Supabase client, built only when used so a phone without keys never creates it. */
+object SupaGroupApi : GroupApi {
+    override suspend fun createGroup(name: String) = SupaRemote(Supa.client).createGroup(name)
+
+    override suspend fun joinGroup(code: String) = SupaRemote(Supa.client).joinGroup(code)
+
+    override suspend fun leaveGroup(groupId: String) = SupaRemote(Supa.client).leaveGroup(groupId)
+
+    override suspend fun removeMember(groupId: String, userId: String) =
+        SupaRemote(Supa.client).removeMember(groupId, userId)
 }
