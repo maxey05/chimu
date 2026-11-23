@@ -99,4 +99,18 @@ data class Txn(
     val status: String = "confirmed",
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
+    /** Reference or transaction number, as printed on a receipt or message. */
+    val refNo: String? = null,
+    /** Where the receipt photo lives in the `receipts` bucket (`{owner}/{id}.jpg`). Set by sync once the photo is uploaded. */
+    val receiptPath: String? = null,
+    val sellerTin: String? = null,
+    val invoiceNo: String? = null,
+    /** VAT breakdown from the receipt, in centavos. Null when the receipt doesn't show it. */
+    val vatableSales: Long? = null,
+    val vat: Long? = null,
+    val vatExempt: Long? = null,
+    /** Phone only: the photo file on this phone. Null after a reinstall, when [receiptPath] is used instead. */
+    val localPhoto: String? = null,
+    /** Phone only: why the last try at reading this scan failed. Null if it has not failed. */
+    val extractError: String? = null,
 )
