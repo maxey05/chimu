@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Chimu</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="topbar" id="topbar" hidden>
+    <h1 class="brand">Chimu</h1>
+    <div class="scope" id="scope-controls" role="group" aria-label="Whose transactions">
+      <button type="button" id="scope-personal" aria-pressed="true">Personal</button>
+      <button type="button" id="scope-group" aria-pressed="false">Group</button>
+      <label class="group-pick" id="group-pick-wrap" hidden>
+        <span class="sr-only">Group</span>
+        <select id="group-pick"></select>
+      </label>
+    </div>
+    <div class="who">
+      <span id="who-email" class="muted"></span>
+      <button type="button" id="refresh">Refresh</button>
+      <button type="button" id="signout">Sign out</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden>
+    <p id="banner-text" role="alert"></p>
+    <button type="button" id="banner-retry" hidden>Try again</button>
+    <button type="button" id="banner-close" aria-label="Dismiss message">Dismiss</button>
+  </div>
+
+  <main id="main" tabindex="-1">
+    <section id="view-setup" class="card narrow" hidden>
+      <h1>Set up needed</h1>
+      <p>This page does not know which Supabase project to talk to. Open <code>config.js</code> and fill in
+         <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> (the public anon key, never the service-role key),
+         then reload.</p>
+    </section>
+
+    <section id="view-login" class="card narrow" hidden>
+      <h1>Sign in</h1>
+      <p class="muted">Use the same email and password as the Chimu app on your phone.</p>
+      <form id="login-form" novalidate>
+        <label for="login-email">Email</label>
+        <input id="login-email" type="email" autocomplete="username" required>
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password" required>
+        <p id="login-error" class="error" role="alert" hidden></p>
+        <button type="submit" id="login-submit" class="primary">Sign in</button>
+      </form>
+    </section>
+
+    <div id="view-app" hidden>
+      <div class="tabs" role="tablist" aria-label="Sections">
+        <button type="button" role="tab" id="tab-btn-transactions" aria-controls="tab-transactions" aria-selected="true">Transactions</button>
+        <button type="button" role="tab" id="tab-btn-dashboard" aria-controls="tab-dashboard" aria-selected="false" tabindex="-1">Dashboard</button>
+      </div>
+
+      <section id="tab-transactions" role="tabpanel" aria-labelledby="tab-btn-transactions">
+        <p id="scope-title" class="scope-title"></p>
+        <form id="filters" class="filters" aria-label="Filters" novalidate>
+          <label>From <input type="date" id="f-from"></label>
+          <label>To <input type="date" id="f-to"></label>
+          <label id="f-member-wrap" hidden>Member <select id="f-member"></select></label>
+          <label>Wallet <select id="f-wallet"></select></label>
+          <label>Category <select id="f-category"></select></label>
+          <label>Type
+            <select id="f-type">
+              <option value="">All types</option>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="f-business"> Business only</label>
+          <label class="grow">Search <input type="search" id="f-search" placeholder="Merchant, note, ref no, amount"></label>
+          <button type="button" id="f-clear">Clear filters</button>
+          <button type="button" id="export" class="primary">Export CSV</button>
+        </form>
+        <p id="filter-hint" class="hint" hidden></p>
+
+        <div class="table-wrap">
+          <table id="txn-table">
+            <caption class="sr-only">Transactions matching the filters</caption>
+            <thead><tr id="txn-head"></tr></thead>
+            <tbody id="txn-body"></tbody>
+            <tfoot id="txn-foot"></tfoot>
+          </table>
+        </div>
+        <p id="empty" class="muted" hidden></p>
+        <button type="button" id="show-more" hidden>Show more</button>
+        <p class="muted small">Transfers are listed but not counted in spent, income or net.</p>
+      </section>
+
+      <section id="tab-dashboard" role="tabpanel" aria-labelledby="tab-btn-dashboard" hidden></section>
+    </div>
+  </main>
+
+  <aside id="panel" class="panel" role="dialog" aria-modal="false" aria-labelledby="panel-title" hidden>
+    <div class="panel-head">
+      <h2 id="panel-title" tabindex="-1">Transaction</h2>
+      <button type="button" id="panel-close">Close</button>
+    </div>
+    <div id="panel-discard" class="notice" hidden>
+      <p>You have changes that are not saved.</p>
+      <button type="button" id="discard-yes">Discard changes</button>
+      <button type="button" id="discard-no" class="primary">Keep editing</button>
+    </div>
+    <div class="panel-body">
+      <div class="photo" id="panel-photo" aria-live="polite"></div>
+      <div class="form-col" id="panel-form"></div>
+    </div>
+  </aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
