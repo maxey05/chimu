@@ -1,0 +1,200 @@
+/* Dashboard tab (RFC-008). Everything is scoped under .dash so it never depends on style.css.
+   System fonts, its own page and card colors, light and dark by prefers-color-scheme.
+   Palette: the dataviz skill's validated default (light and dark steps), ink and chrome from the same
+   file. Series colors are only ever used for marks; every piece of text wears an ink color. */
+
+.dash {
+  /* light */
+  --dash-page: #f9f9f7;
+  --dash-surface: #fcfcfb;
+  --dash-ink: #0b0b0b;
+  --dash-ink2: #52514e;       /* 7.5:1 on the page: all small text uses this or the ink */
+  --dash-dim: #898781;        /* de-emphasised bars: a mark, never text (3.5:1) */
+  --dash-gridline: #e1e0d9;
+  --dash-axis: #c3c2b7;
+  --dash-border: rgba(11, 11, 11, 0.10);
+  --dash-wash: rgba(11, 11, 11, 0.05);
+  --dash-accent: #256abf;     /* buttons and focus; white on it is 5.4:1 */
+  --dash-accent-ink: #ffffff;
+  --dash-s1: #2a78d6; --dash-s2: #eb6834; --dash-s3: #1baf7a; --dash-s4: #eda100;
+  --dash-s5: #e87ba4; --dash-s6: #008300; --dash-s7: #6250d6; --dash-s8: #e34948;
+  --dash-sother: #898781;
+  /* the number printed on a series color: white or near-black, whichever reads better on it */
+  --dash-s1-ink: #ffffff; --dash-s2-ink: #0b0b0b; --dash-s3-ink: #0b0b0b; --dash-s4-ink: #0b0b0b;
+  --dash-s5-ink: #0b0b0b; --dash-s6-ink: #ffffff; --dash-s7-ink: #ffffff; --dash-s8-ink: #0b0b0b;
+  --dash-sother-ink: #0b0b0b;
+
+  box-sizing: border-box;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px;
+  background: var(--dash-page);
+  color: var(--dash-ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dash {
+    --dash-page: #0d0d0d;
+    --dash-surface: #1a1a19;
+    --dash-ink: #f0efec;
+    --dash-ink2: #c3c2b7;
+    --dash-dim: #898781;       /* 4.9:1 on the card */
+    --dash-gridline: #2c2c2a;
+    --dash-axis: #383835;
+    --dash-border: rgba(255, 255, 255, 0.10);
+    --dash-wash: rgba(255, 255, 255, 0.07);
+    --dash-accent: #3987e5;
+    --dash-accent-ink: #0b0b0b;
+    --dash-s1: #3987e5; --dash-s2: #d95926; --dash-s3: #199e70; --dash-s4: #c98500;
+    --dash-s5: #d55181; --dash-s6: #0ca30c; --dash-s7: #9085e9; --dash-s8: #e66767;
+    --dash-s1-ink: #0b0b0b; --dash-s2-ink: #0b0b0b; --dash-s3-ink: #0b0b0b; --dash-s4-ink: #0b0b0b;
+    --dash-s5-ink: #0b0b0b; --dash-s6-ink: #0b0b0b; --dash-s7-ink: #0b0b0b; --dash-s8-ink: #0b0b0b;
+    color-scheme: dark;
+  }
+}
+
+.dash *, .dash *::before, .dash *::after { box-sizing: border-box; }
+.dash :where(h2, h3, h4, p, dl, dd, ul) { margin: 0; padding: 0; } /* :where keeps this reset weaker than the rules below */
+.dash :where(ul) { list-style: none; }
+.dash-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- heading and period picker ------------------------------------------------------------- */
+.dash-head { margin-bottom: 14px; }
+.dash-title { font-size: 22px; font-weight: 650; overflow-wrap: anywhere; }
+.dash-sub { color: var(--dash-ink2); margin-top: 2px; }
+
+.dash-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.dash-toggle { display: inline-flex; gap: 4px; margin-right: 8px; }
+.dash-btn, .dash-select {
+  min-height: 40px; padding: 0 14px; border: 1px solid var(--dash-axis); border-radius: 8px;
+  background: var(--dash-surface); color: var(--dash-ink); font: inherit; cursor: pointer;
+}
+.dash-select { min-width: 190px; padding-right: 8px; }
+.dash-btn:hover:not([disabled]), .dash-select:hover { background: var(--dash-wash); }
+.dash-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.dash-btn[aria-pressed="true"], .dash-btn-accent {
+  background: var(--dash-accent); border-color: var(--dash-accent); color: var(--dash-accent-ink); font-weight: 650;
+}
+.dash-btn[aria-pressed="true"]::before { content: "\2713\00a0"; } /* a check mark, so "on" is not only a color */
+.dash-btn:focus-visible, .dash-select:focus-visible, .dash-details > summary:focus-visible {
+  outline: 3px solid var(--dash-accent); outline-offset: 2px;
+}
+
+/* --- tiles ---------------------------------------------------------------------------------- */
+.dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.dash-tile {
+  min-width: 0; padding: 14px 16px; background: var(--dash-surface);
+  border: 1px solid var(--dash-border); border-radius: 12px;
+}
+.dash-tile dt { color: var(--dash-ink2); font-size: 14px; }
+.dash-tile-value { font-size: 24px; font-weight: 650; line-height: 1.25; margin-top: 4px; overflow-wrap: anywhere; }
+.dash-tile-note { color: var(--dash-ink2); font-size: 13px; margin-top: 2px; }
+
+/* --- cards ----------------------------------------------------------------------------------- */
+.dash-card {
+  min-width: 0; margin-bottom: 16px; padding: 16px 20px 12px; background: var(--dash-surface);
+  border: 1px solid var(--dash-border); border-radius: 12px;
+}
+.dash-card h3 { font-size: 16px; font-weight: 650; }
+.dash-note { color: var(--dash-ink2); font-size: 13px; margin: 2px 0 10px; }
+.dash-none { color: var(--dash-ink2); padding: 14px 0 8px; }
+.dash-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 0 16px; align-items: start; }
+.dash-foot { color: var(--dash-ink2); font-size: 13px; margin-top: 4px; }
+
+.dash-empty {
+  margin-bottom: 16px; padding: 24px 20px; background: var(--dash-surface);
+  border: 1px solid var(--dash-border); border-radius: 12px;
+}
+.dash-empty h3 { font-size: 18px; font-weight: 650; }
+.dash-empty p { color: var(--dash-ink2); margin: 4px 0 12px; }
+
+/* --- charts ---------------------------------------------------------------------------------- */
+.dash-plot { position: relative; margin-top: 6px; }
+.dash-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.dash-svg text { font-family: inherit; }
+.dash-tick { font-size: 13px; fill: var(--dash-ink2); }
+.dash-tick-on { font-weight: 700; fill: var(--dash-ink); }
+.dash-selected { fill: var(--dash-accent); }
+.dash-gridline { stroke: var(--dash-gridline); stroke-width: 1; }
+.dash-axis { stroke: var(--dash-axis); stroke-width: 1; }
+.dash-value { font-size: 13px; font-weight: 650; fill: var(--dash-ink); pointer-events: none; }
+.dash-name { font-size: 13px; fill: var(--dash-ink); pointer-events: none; }
+.dash-detail { font-size: 13px; fill: var(--dash-ink2); pointer-events: none; }
+.dash-segtag { font-size: 11px; font-weight: 700; pointer-events: none; }
+.dash-dim { fill: var(--dash-dim); }
+.dash-hit { fill: transparent; stroke: none; }
+.dash-mark { outline: none; cursor: default; }
+.dash-mark:hover .dash-hit, .dash-mark:focus .dash-hit { fill: var(--dash-wash); }
+.dash-mark:focus .dash-hit { stroke: var(--dash-accent); stroke-width: 2; }
+
+/* series colors: one class paints an SVG mark (fill) or an HTML chip/key (background) */
+.dash-s1 { fill: var(--dash-s1); background-color: var(--dash-s1); --on: var(--dash-s1-ink); }
+.dash-s2 { fill: var(--dash-s2); background-color: var(--dash-s2); --on: var(--dash-s2-ink); }
+.dash-s3 { fill: var(--dash-s3); background-color: var(--dash-s3); --on: var(--dash-s3-ink); }
+.dash-s4 { fill: var(--dash-s4); background-color: var(--dash-s4); --on: var(--dash-s4-ink); }
+.dash-s5 { fill: var(--dash-s5); background-color: var(--dash-s5); --on: var(--dash-s5-ink); }
+.dash-s6 { fill: var(--dash-s6); background-color: var(--dash-s6); --on: var(--dash-s6-ink); }
+.dash-s7 { fill: var(--dash-s7); background-color: var(--dash-s7); --on: var(--dash-s7-ink); }
+.dash-s8 { fill: var(--dash-s8); background-color: var(--dash-s8); --on: var(--dash-s8-ink); }
+.dash-sother { fill: var(--dash-sother); background-color: var(--dash-sother); --on: var(--dash-sother-ink); }
+.dash-on-s1 { fill: var(--dash-s1-ink); } .dash-on-s2 { fill: var(--dash-s2-ink); }
+.dash-on-s3 { fill: var(--dash-s3-ink); } .dash-on-s4 { fill: var(--dash-s4-ink); }
+.dash-on-s5 { fill: var(--dash-s5-ink); } .dash-on-s6 { fill: var(--dash-s6-ink); }
+.dash-on-s7 { fill: var(--dash-s7-ink); } .dash-on-s8 { fill: var(--dash-s8-ink); }
+.dash-on-sother { fill: var(--dash-sother-ink); }
+
+.dash-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 6px 0 4px; }
+.dash-legend li { display: inline-flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.dash-chip {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px;
+  border-radius: 5px; color: var(--on); font-size: 12px; font-weight: 700; line-height: 1;
+}
+
+/* --- tooltip --------------------------------------------------------------------------------- */
+.dash-tip {
+  position: absolute; z-index: 5; min-width: 140px; max-width: 320px; padding: 8px 10px; pointer-events: none;
+  background: var(--dash-surface); color: var(--dash-ink); border: 1px solid var(--dash-axis); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); font-size: 13px; line-height: 1.35;
+}
+.dash-tip[hidden] { display: none; }
+.dash-tip-title { color: var(--dash-ink2); margin-bottom: 2px; }
+.dash-tip-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.dash-tip-row strong { font-weight: 650; }
+.dash-tip-label { color: var(--dash-ink2); }
+.dash-key { display: inline-block; flex: none; width: 14px; height: 3px; border-radius: 2px; }
+
+/* --- tables (the twin of every chart) ---------------------------------------------------------- */
+.dash-details { margin-top: 6px; }
+.dash-details > summary { cursor: pointer; color: var(--dash-ink2); padding: 8px 0; min-height: 24px; }
+.dash-tablewrap { overflow-x: auto; margin-top: 8px; }
+.dash-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.dash-table caption { text-align: left; color: var(--dash-ink2); font-size: 13px; padding-bottom: 6px; }
+.dash-table th, .dash-table td { padding: 6px 8px; border-bottom: 1px solid var(--dash-gridline); text-align: left; overflow-wrap: anywhere; }
+.dash-table thead th { color: var(--dash-ink2); font-weight: 600; border-bottom-color: var(--dash-axis); }
+.dash-table tbody th { font-weight: 500; }
+.dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- wallets --------------------------------------------------------------------------------- */
+.dash-wallet-owner { font-size: 14px; font-weight: 650; margin: 12px 0 0; overflow-wrap: anywhere; }
+.dash-wallets li {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--dash-gridline);
+}
+.dash-wallets li:last-child { border-bottom: 0; }
+.dash-wallet-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; overflow-wrap: anywhere; }
+.dash-wallet-type { color: var(--dash-ink2); font-size: 13px; }
+.dash-wallet-balance { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --- forced colors (high-contrast mode): hue is gone, so shape and outline carry the marks ------- */
+@media (forced-colors: active) {
+  .dash-bar { fill: Highlight; stroke: CanvasText; stroke-width: 1; }
+  .dash-dim { fill: GrayText; }
+  .dash-chip, .dash-key, .dash-chip-rect { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .dash-btn[aria-pressed="true"] { border-width: 3px; }
+  .dash-mark:focus .dash-hit { stroke: Highlight; }
+}
