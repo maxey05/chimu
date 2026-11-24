@@ -4,7 +4,11 @@ import android.content.ActivityNotFoundException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -31,16 +36,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.chimu.ChimuApp
 import com.chimu.Identity
 import com.chimu.InboxRules
 import com.chimu.Ledger
 import com.chimu.Money
+import com.chimu.CategorySpend
 import com.chimu.ReceiptPhotos
 import com.chimu.SyncStatus
 import com.chimu.SyncText
+import com.chimu.TopCategories
 import java.time.YearMonth
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -59,6 +69,7 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: ()
     val sync by app.sync.status.collectAsState()
     val month = remember { YearMonth.now().toString() } // `2026-11`, the same shape as a stored date's first 7 characters
     val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
+    val topCategories = remember(txns, month, identity.userId) { TopCategories.top(txns, month, identity.userId) }
     val scanner = rememberReceiptScanner(app)
 
     // Pull down to sync. The Sync now button below does the same, for anyone who doesn't find the gesture.
@@ -94,6 +105,9 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: ()
                 }
             }
 
+            Spacer(Modifier.height(16.dp))
+            TopCategoriesCard(topCategories, totals.spent)
+
             if (inbox.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 InboxCard(inbox.size, onInbox)
@@ -124,6 +138,58 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: ()
 
             Spacer(Modifier.height(24.dp))
             SyncCard(sync, onSyncNow = { app.sync.requestNow() })
+        }
+    }
+}
+
+/**
+ * Where this month's money went (RFC-008): the biggest spending categories as plain bars. Every bar
+ * has its name and amount written beside it, so the length is never the only way to read it
+ * (RULES 21), and each row is read out as one sentence by a screen reader.
+ */
+@Composable
+private fun TopCategoriesCard(entries: List<CategorySpend>, totalSpent: Long) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Top categories this month", style = MaterialTheme.typography.labelLarge)
+            if (entries.isEmpty()) {
+                Text(
+                    "No spending logged this month yet.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            val biggest = entries.firstOrNull()?.spent ?: 1L
+            for (entry in entries) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp)
+                        .semantics(mergeDescendants = true) { contentDescription = TopCategories.describe(entry, totalSpent) },
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(entry.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        Text(Money.format(entry.spent), style = MaterialTheme.typography.titleMedium)
+                    }
+                    // The track is the full width; the bar is this category's share of the biggest one.
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .fillMaxWidth()
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((entry.spent.toFloat() / biggest).coerceIn(0.02f, 1f))
+                                .height(12.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primary),
+                        )
+                    }
+                }
+            }
         }
     }
 }
