@@ -41,6 +41,7 @@ fun MoreScreen(
     onWallets: () -> Unit,
     onBudgets: () -> Unit,
     onRecurring: () -> Unit,
+    onGoals: () -> Unit,
     onInbox: () -> Unit,
     onAutoLog: () -> Unit,
 ) {
@@ -65,6 +66,8 @@ fun MoreScreen(
         MoreRow("Budgets", onBudgets)
         HorizontalDivider()
         MoreRow("Recurring", onRecurring)
+        HorizontalDivider()
+        MoreRow("Goals", onGoals)
         HorizontalDivider()
         MoreRow(if (inbox.isEmpty()) "Inbox" else "Inbox (${inbox.size} to check)", onInbox)
         HorizontalDivider()

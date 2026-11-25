@@ -51,6 +51,9 @@ private const val WALLET_FORM = "wallet"
 private const val BUDGET_FORM = "budget"
 private const val RECURRING = "recurring"
 private const val RECURRING_FORM = "recurring_item"
+private const val GOALS = "goals"
+private const val GOAL_FORM = "goal"
+private const val GOAL_ADD = "goal_add"
 
 private class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -166,6 +169,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     onWallets = { nav.navigate(WALLETS) },
                     onBudgets = { nav.navigate(BUDGETS) },
                     onRecurring = { nav.navigate(RECURRING) },
+                    onGoals = { nav.navigate(GOALS) },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
                 )
@@ -226,6 +230,27 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
                 RecurringFormScreen(app, identity, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
+            }
+            composable(GOALS) {
+                GoalsScreen(
+                    app,
+                    identity,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { id -> nav.navigate("$GOAL_FORM/$id") },
+                    onAddTo = { id -> nav.navigate("$GOAL_ADD/$id") },
+                )
+            }
+            composable(
+                route = "$GOAL_FORM/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                GoalFormScreen(app, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
+            }
+            composable(
+                route = "$GOAL_ADD/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                AddToGoalScreen(app, entry.arguments?.getString("id") ?: "", onClose = { nav.popBackStack() })
             }
         }
     }
