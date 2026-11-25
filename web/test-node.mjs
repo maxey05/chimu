@@ -1,7 +1,7 @@
 // Run the same checks as test.html from a terminal:  node web/test-node.mjs
 import { makeT, summary } from './check.js';
 
-const modules = ['./test-csv.js', './test-core.js', './test-stats.js', './test-budgets.js'];
+const modules = ['./test-csv.js', './test-core.js', './test-stats.js', './test-budgets.js', './test-goals.js'];
 const t = makeT();
 for (const name of modules) {
   const m = await import(name);

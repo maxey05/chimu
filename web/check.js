@@ -19,6 +19,9 @@ export function makeT() {
         (e) => { slot.ok = false; slot.error = String((e && e.message) || e); },
       ));
     },
+    // A promise that settles once every later() check registered so far has finished (never rejects).
+    // Lets a module with DOM checks wait for earlier modules' async checks that share module state.
+    idle() { return Promise.all(pending.slice()).then(() => undefined, () => undefined); },
     // Wait for every later() check. Call once after all tests(t) calls, before summary().
     settle() { return Promise.all(pending); },
     eq(actual, expected, message = '') {
