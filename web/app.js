@@ -9,7 +9,7 @@ import { ALL_CATEGORIES, categoryLabel, categoriesFor } from './categories.js';
 import { EMPTY_FILTERS, NO_CATEGORY, applyFilters, sortTxns } from './filters.js';
 import { validateEdit, nextUpdatedAt, LIMITS } from './edit.js';
 import {
-  loadDirectory, loadScope, loadBudgets, updateOwnTxn, tombstoneTxn, createBudget, updateOwnBudget, tombstoneBudget,
+  loadDirectory, loadScope, loadBudgets, loadGoals, updateOwnTxn, tombstoneTxn, createBudget, updateOwnBudget, tombstoneBudget,
   signedPhotoUrl,
 } from './data.js';
 
@@ -29,6 +29,8 @@ const state = {
   txns: [], // ALL non-deleted transactions of the scope, unfiltered (RFC-007 contract)
   budgets: [], // live budgets of the scope (RFC-009): mine with no group in Personal, the group's in Group
   budgetsError: '', // why the budgets did not load; shown in the Budgets card, never mistaken for "no budgets"
+  goals: [], // live goals of the scope's members (RFC-011): mine in Personal, every member's in Group. Read-only here
+  goalsError: '', // why the goals did not load; shown in the Goals card, never mistaken for "no goals"
   filters: { ...EMPTY_FILTERS },
   filtered: [],
   visible: ROWS_PER_PAGE,
@@ -116,6 +118,8 @@ function resetSession() {
   state.txns = [];
   state.budgets = [];
   state.budgetsError = '';
+  state.goals = [];
+  state.goalsError = '';
   state.filtered = [];
   state.filters = { ...EMPTY_FILTERS };
   state.selectedId = null;
@@ -206,6 +210,14 @@ async function loadData({ scope = state.scope, reloadDirectory = false } = {}) {
     } catch (e) {
       budgetsError = errText(e);
     }
+    // Goals too: their own failure, so the rest still shows and the Goals card says what went wrong.
+    let goals = null;
+    let goalsError = '';
+    try {
+      goals = await loadGoals(state.client, data.members.map((m) => m.id));
+    } catch (e) {
+      goalsError = errText(e);
+    }
     if (token !== state.loadToken) return false; // a newer load or a sign-out replaced this one
     const sameScope = state.scope.mode === target.mode && state.scope.groupId === target.groupId;
     state.scope = target;
@@ -217,6 +229,8 @@ async function loadData({ scope = state.scope, reloadDirectory = false } = {}) {
     state.txns = data.txns;
     state.budgets = budgets || (sameScope ? state.budgets : []); // a failed reload keeps the list on screen
     state.budgetsError = budgetsError;
+    state.goals = goals || (sameScope ? state.goals : []); // a failed reload keeps the list on screen
+    state.goalsError = goalsError;
     state.visible = ROWS_PER_PAGE;
     if (note) showBanner('info', note); else hideBanner();
     syncScopeControls();
@@ -444,6 +458,9 @@ function buildCtx() {
     onSaveBudget: saveBudget,
     onDeleteBudget: deleteBudget,
     onRetryBudgets: reloadBudgets,
+    goals: state.goals,
+    goalsError: state.goalsError,
+    onRetryGoals: reloadGoals,
   };
 }
 
@@ -508,6 +525,22 @@ async function reloadBudgets() {
   if (token !== state.loadToken || !state.me) return; // a newer load or a sign-out replaced this one
   if (budgets) state.budgets = budgets;
   state.budgetsError = error;
+  paintDashboard();
+}
+
+// "Try again" in the Goals card after a failed load (RFC-011).
+async function reloadGoals() {
+  const token = state.loadToken;
+  let error = '';
+  let goals = null;
+  try {
+    goals = await loadGoals(state.client, state.members.map((m) => m.id));
+  } catch (e) {
+    error = errText(e);
+  }
+  if (token !== state.loadToken || !state.me) return; // a newer load or a sign-out replaced this one
+  if (goals) state.goals = goals;
+  state.goalsError = error;
   paintDashboard();
 }
 

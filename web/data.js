@@ -49,6 +49,26 @@ export function normalizeBudget(row) {
   };
 }
 
+// Goals (RFC-011): the other columns keep their database names; deadline stays null when there is none.
+export function normalizeGoal(row) {
+  return {
+    ...row,
+    target: normCentavos(row.target),
+    deadline: row.deadline || null,
+    updated_at: normCentavos(row.updated_at),
+    deleted: row.deleted === true,
+  };
+}
+
+// The live goals of `ownerIds` (the scope's members: just me in Personal view). Goals have no group column, so a
+// group's goals are the goals of its members, which RLS lets group mates read. A failed page rejects, so the caller
+// never shows part of the list as the whole list (RULES 20). Read-only: the web never writes a goal.
+export async function loadGoals(client, ownerIds) {
+  const rows = await fetchAllPages((a, b) =>
+    client.from('goals').select('*').in('owner_id', ownerIds).eq('deleted', false).order('id').range(a, b));
+  return rows.map(normalizeGoal).filter((g) => !g.deleted);
+}
+
 // The groups I am in, who is in them, and everyone's display name. RLS already limits all three.
 export async function loadDirectory(client) {
   const groups = await fetchAllPages((a, b) =>
