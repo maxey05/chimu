@@ -8,7 +8,10 @@ import { csvTotals, buildCsv } from './csv.js';
 import { ALL_CATEGORIES, categoryLabel, categoriesFor } from './categories.js';
 import { EMPTY_FILTERS, NO_CATEGORY, applyFilters, sortTxns } from './filters.js';
 import { validateEdit, nextUpdatedAt, LIMITS } from './edit.js';
-import { loadDirectory, loadScope, updateOwnTxn, tombstoneTxn, signedPhotoUrl } from './data.js';
+import {
+  loadDirectory, loadScope, loadBudgets, updateOwnTxn, tombstoneTxn, createBudget, updateOwnBudget, tombstoneBudget,
+  signedPhotoUrl,
+} from './data.js';
 
 const ROWS_PER_PAGE = 200;
 const TYPE_LABEL = { expense: 'Expense', income: 'Income', transfer: 'Transfer' };
@@ -24,6 +27,8 @@ const state = {
   members: [], // [{ id, name }], me first
   wallets: [], // every wallet of the scope's owners, archived ones flagged deleted
   txns: [], // ALL non-deleted transactions of the scope, unfiltered (RFC-007 contract)
+  budgets: [], // live budgets of the scope (RFC-009): mine with no group in Personal, the group's in Group
+  budgetsError: '', // why the budgets did not load; shown in the Budgets card, never mistaken for "no budgets"
   filters: { ...EMPTY_FILTERS },
   filtered: [],
   visible: ROWS_PER_PAGE,
@@ -109,6 +114,8 @@ function resetSession() {
   state.members = [];
   state.wallets = [];
   state.txns = [];
+  state.budgets = [];
+  state.budgetsError = '';
   state.filtered = [];
   state.filters = { ...EMPTY_FILTERS };
   state.selectedId = null;
@@ -191,7 +198,16 @@ async function loadData({ scope = state.scope, reloadDirectory = false } = {}) {
       note = 'That group is no longer available, so you are back on your personal view.';
     }
     const data = await loadScope(state.client, state.directory, state.me, target);
+    // Budgets have their own failure: the transactions still show, and the Budgets card says what went wrong.
+    let budgets = null;
+    let budgetsError = '';
+    try {
+      budgets = await loadBudgets(state.client, state.me, target);
+    } catch (e) {
+      budgetsError = errText(e);
+    }
     if (token !== state.loadToken) return false; // a newer load or a sign-out replaced this one
+    const sameScope = state.scope.mode === target.mode && state.scope.groupId === target.groupId;
     state.scope = target;
     if (target.groupId) state.lastGroupId = target.groupId;
     const g = state.directory.groups.find((x) => x.id === target.groupId);
@@ -199,6 +215,8 @@ async function loadData({ scope = state.scope, reloadDirectory = false } = {}) {
     state.members = data.members;
     state.wallets = data.wallets;
     state.txns = data.txns;
+    state.budgets = budgets || (sameScope ? state.budgets : []); // a failed reload keeps the list on screen
+    state.budgetsError = budgetsError;
     state.visible = ROWS_PER_PAGE;
     if (note) showBanner('info', note); else hideBanner();
     syncScopeControls();
@@ -419,7 +437,78 @@ function buildCtx() {
       id: w.id, owner_id: w.owner_id, name: w.name, type: w.type, opening_balance: w.opening_balance, deleted: false,
     })),
     txns: state.txns,
+    groupId: state.scope.mode === 'group' ? state.scope.groupId : null,
+    myGroupIds: state.directory.groups.map((g) => g.id),
+    budgets: state.budgets,
+    budgetsError: state.budgetsError,
+    onSaveBudget: saveBudget,
+    onDeleteBudget: deleteBudget,
+    onRetryBudgets: reloadBudgets,
   };
+}
+
+// ---------------------------------------------------------------- budgets (RFC-009)
+// The dashboard never talks to Supabase: it validates, then calls these, and redraws with the list they return.
+function budgetInScope(row) {
+  if (state.scope.mode === 'group') return row.group_id === state.scope.groupId;
+  return row.group_id === null && row.owner_id === state.me.id;
+}
+
+// Swap one budget in memory with what the server returned. A tombstoned or out-of-scope row leaves the list.
+function mergeBudget(row) {
+  const rest = state.budgets.filter((b) => b.id !== row.id);
+  state.budgets = !row.deleted && budgetInScope(row) ? [...rest, row] : rest;
+}
+
+// What the dashboard gets back: ok or not, the words for the person, and the list as it now stands.
+function budgetAnswer(res) {
+  if (res.ok || res.reason === 'discarded') mergeBudget(res.row); // a discarded write returns the newer stored row
+  return { ok: res.ok, message: res.message, budgets: state.budgets };
+}
+
+async function saveBudget(change) {
+  const mine = change.id ? state.budgets.find((b) => b.id === change.id && b.owner_id === state.me.id) : null;
+  if (change.id && !mine) {
+    return { ok: false, message: 'This budget is no longer in the list, so nothing was saved.', budgets: state.budgets };
+  }
+  let res;
+  try {
+    res = mine
+      ? await updateOwnBudget(state.client, mine.id, state.me.id,
+        { category: change.category, monthly_limit: change.monthlyLimit }, nextUpdatedAt(Date.now(), mine))
+      : await createBudget(state.client, state.me.id, change, Date.now());
+  } catch (e) {
+    res = { ok: false, reason: 'error', message: errText(e) };
+  }
+  return budgetAnswer(res);
+}
+
+async function deleteBudget(id) {
+  const mine = state.budgets.find((b) => b.id === id && b.owner_id === state.me.id);
+  if (!mine) return { ok: false, message: 'This budget is no longer in the list.', budgets: state.budgets };
+  let res;
+  try {
+    res = await tombstoneBudget(state.client, mine.id, state.me.id, nextUpdatedAt(Date.now(), mine));
+  } catch (e) {
+    res = { ok: false, reason: 'error', message: errText(e) };
+  }
+  return budgetAnswer(res);
+}
+
+// "Try again" in the Budgets card after a failed load.
+async function reloadBudgets() {
+  const token = state.loadToken;
+  let error = '';
+  let budgets = null;
+  try {
+    budgets = await loadBudgets(state.client, state.me, state.scope);
+  } catch (e) {
+    error = errText(e);
+  }
+  if (token !== state.loadToken || !state.me) return; // a newer load or a sign-out replaced this one
+  if (budgets) state.budgets = budgets;
+  state.budgetsError = error;
+  paintDashboard();
 }
 
 // The Dashboard tab (RFC-008) draws itself from ctx. It is imported on first use so a problem in it

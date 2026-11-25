@@ -9,16 +9,28 @@
 //           members: [{ id, name }],
 //           wallets: [{ id, owner_id, name, type, opening_balance, deleted }],
 //           txns: [raw Supabase rows, all time, not deleted],
-//           today?: 'YYYY-MM-DD' }   // only for tests; the real date is used when it is missing
+//           today?: 'YYYY-MM-DD',    // only for tests; the real date is used when it is missing
+//           // Budgets vs actual (RFC-009). All optional; without the callbacks the card is read-only.
+//           groupId?, myGroupIds?: [ids of the groups I am in],
+//           budgets?: [budget rows of this scope, not deleted], budgetsError?: 'why they did not load',
+//           onSaveBudget?({ id|null, groupId, category, monthlyLimit }), onDeleteBudget?(id),
+//           onRetryBudgets?() }
+//   The two save/delete callbacks do the write (app.js wires them to data.js) and answer
+//   { ok: true, budgets } or { ok: false, message, budgets? } with the host's new list of budgets, so this
+//   file still never talks to Supabase.
 //
 // All text from the data (names, categories) goes in through textContent, never innerHTML.
-import { formatPesos } from './money.js';
+import { formatPesos, pesosPlain } from './money.js';
+import { CATEGORIES, categoryLabel } from './categories.js';
+import {
+  WARN_PERCENT, budgetMonth, budgetStatus, budgetSummary, budgetTitle, checkBudget, usageList, visibleBudgets,
+} from './budgets.js';
 import {
   MONTH_NAMES, MONTH_SHORT, summarize, inPeriod, monthlySpend, spendByCategory, memberStats,
   monthlyByMember, walletBalances, periodsAvailable, periodOptions, periodKey, periodLabel,
 } from './stats.js';
 import {
-  el, columnChart, stackedColumnChart, barList, legend, table, dataTable, percentText,
+  el, columnChart, stackedColumnChart, barList, legend, table, dataTable, percentText, progressBar,
 } from './charts.js';
 
 // The picker survives re-renders. year/month stay null until the person chooses, which means "the
@@ -29,7 +41,18 @@ let picker = { kind: 'month', year: null, month: null };
 // person does not inherit the last picker; the tests call it between checks.
 export function resetDashboardPeriod() {
   picker = { kind: 'month', year: null, month: null };
+  budgetUi = freshBudgetUi(null);
 }
+
+// What the Budgets card remembers between renders, so a data refresh never wipes what someone is typing
+// (RULES 20). form = null | { editingId, category, limit, errors, formError }.
+let budgetUi = freshBudgetUi(null);
+function freshBudgetUi(scopeKey) {
+  return { scopeKey, form: null, confirmingId: null, confirmError: '', status: '', busy: false };
+}
+
+// The newest renderDashboard() arguments: a write that finishes after a redraw must draw with these.
+const live = { root: null, ctx: null };
 
 const WALLET_TYPES = {
   cash: 'Cash', gcash: 'GCash', maya: 'Maya', card: 'Card', bank: 'Bank', savings: 'Savings',
@@ -321,11 +344,257 @@ function buildEmpty(view, period, today, rerender) {
   return box;
 }
 
+// --- budgets vs actual (RFC-009) ------------------------------------------------------------------------
+
+// Draws again with `patch` merged into the newest ctx, then moves focus to the element tagged `focusKey`.
+function redraw(focusKey, patch = {}) {
+  live.ctx = { ...live.ctx, ...patch };
+  renderDashboard(live.root, live.ctx);
+  const target = focusKey && live.root.querySelector(`[data-dash-focus="${focusKey}"]:not([disabled])`);
+  if (target) target.focus();
+}
+
+// Draws again after a write: the host's new list of budgets, if it sent one, replaces ours.
+function afterWrite(res, focusKey) {
+  redraw(focusKey, Array.isArray(res.budgets) ? { budgets: res.budgets } : {});
+}
+
+async function runWrite(call) {
+  try {
+    const res = await call();
+    return res && typeof res.ok === 'boolean' ? res : { ok: false, message: 'The change could not be saved.' };
+  } catch (e) {
+    return { ok: false, message: (e && e.message) || String(e) };
+  }
+}
+
+function budgetScopeText(ctx, budget) {
+  return budget.group_id ? `Group: ${ctx.groupName || 'your group'}` : 'Personal';
+}
+
+function budgetRow(ctx, usage, canEdit) {
+  const b = usage.budget;
+  const mine = b.owner_id === ctx.meId;
+  const title = budgetTitle(b);
+  const tone = usage.level.toLowerCase();
+  const ownerName = (ctx.members || []).find((m) => m.id === b.owner_id);
+  const li = el('li', { class: `dash-budget dash-budget-${tone}` }, [
+    el('div', { class: 'dash-budget-head' }, [
+      el('span', { class: 'dash-budget-name' }, title),
+      el('span', { class: 'dash-budget-scope' }, budgetScopeText(ctx, b)),
+      el('span', { class: 'dash-budget-status' }, budgetStatus(usage)),
+    ]),
+    progressBar({ fraction: usage.barFraction, tone, warnAt: WARN_PERCENT / 100 }),
+    el('p', { class: 'dash-budget-text' }, budgetSummary(usage)),
+  ]);
+  if (!mine || ctx.mode === 'group') {
+    li.append(el('p', { class: 'dash-budget-by' }, `Set by ${mine ? 'you' : (ownerName && String(ownerName.name || '').trim()) || 'another member'}`));
+  }
+  if (!mine || !canEdit) return li;
+
+  const edit = el('button', { type: 'button', class: 'dash-btn', 'aria-label': `Edit ${title} budget`, 'data-dash-focus': `budget-edit-${b.id}` }, 'Edit');
+  edit.addEventListener('click', () => {
+    if (budgetUi.busy) return;
+    budgetUi.confirmingId = null;
+    budgetUi.confirmError = '';
+    budgetUi.status = '';
+    budgetUi.form = { editingId: b.id, category: b.category || '', limit: b.monthly_limit > 0 ? pesosPlain(b.monthly_limit) : '', errors: {}, formError: '' };
+    redraw('budget-category');
+  });
+  const del = el('button', { type: 'button', class: 'dash-btn', 'aria-label': `Delete ${title} budget`, 'data-dash-focus': `budget-delete-${b.id}` }, 'Delete');
+  del.addEventListener('click', () => {
+    if (budgetUi.busy) return;
+    budgetUi.confirmingId = b.id;
+    budgetUi.confirmError = '';
+    budgetUi.status = '';
+    redraw(`budget-no-${b.id}`);
+  });
+  li.append(el('div', { class: 'dash-budget-actions' }, [edit, del]));
+
+  if (budgetUi.confirmingId === b.id) {
+    const yes = el('button', { type: 'button', class: 'dash-btn dash-btn-danger', disabled: budgetUi.busy ? '' : null, 'data-dash-focus': `budget-yes-${b.id}` }, 'Yes, delete it');
+    const no = el('button', { type: 'button', class: 'dash-btn', disabled: budgetUi.busy ? '' : null, 'data-dash-focus': `budget-no-${b.id}` }, 'Cancel');
+    no.addEventListener('click', () => {
+      if (budgetUi.busy) return;
+      budgetUi.confirmingId = null;
+      budgetUi.confirmError = '';
+      redraw(`budget-delete-${b.id}`);
+    });
+    yes.addEventListener('click', async () => {
+      if (budgetUi.busy) return;
+      budgetUi.busy = true;
+      yes.disabled = true;
+      no.disabled = true;
+      const res = await runWrite(() => ctx.onDeleteBudget(b.id));
+      budgetUi.busy = false;
+      if (res.ok) {
+        budgetUi.confirmingId = null;
+        budgetUi.confirmError = '';
+        budgetUi.status = `Deleted the ${title} budget. It leaves the phone after its next sync.`;
+        afterWrite(res, 'budget-add');
+      } else {
+        budgetUi.confirmError = `${res.message} The budget was not deleted.`;
+        afterWrite(res, `budget-no-${b.id}`);
+      }
+    });
+    li.append(el('div', { class: 'dash-confirm', role: 'group', 'aria-label': `Delete the ${title} budget` }, [
+      el('p', {}, `Delete the ${title} budget? It leaves the totals here and on the phone after its next sync.`),
+      budgetUi.confirmError ? el('p', { class: 'dash-b-error', role: 'alert' }, budgetUi.confirmError) : null,
+      el('div', { class: 'dash-budget-actions' }, [yes, no]),
+    ].filter(Boolean)));
+  }
+  return li;
+}
+
+// The add / edit form. Typed text lives in budgetUi.form, not only in the inputs, so a redraw keeps it.
+function budgetForm(ctx, scope) {
+  const f = budgetUi.form;
+  const editing = f.editingId !== null;
+  const known = CATEGORIES.expense.some((c) => c.slug === f.category);
+  const options = [
+    el('option', { value: '', selected: f.category === '' ? '' : null }, 'Overall (all expenses)'),
+    ...CATEGORIES.expense.map((c) => el('option', { value: c.slug, selected: f.category === c.slug ? '' : null }, c.label)),
+  ];
+  if (f.category !== '' && !known) options.push(el('option', { value: f.category, selected: '' }, categoryLabel(f.category)));
+
+  const invalid = (name) => (f.errors[name] ? 'true' : null);
+  const select = el('select', {
+    class: 'dash-select dash-b-input', id: 'dash-b-category', 'data-dash-focus': 'budget-category',
+    'aria-describedby': 'dash-b-category-err', 'aria-invalid': invalid('category'),
+  }, options);
+  const limit = el('input', {
+    type: 'text', inputmode: 'decimal', autocomplete: 'off', class: 'dash-input dash-b-input', id: 'dash-b-limit',
+    'data-dash-focus': 'budget-limit', 'aria-describedby': 'dash-b-limit-err dash-b-limit-hint', 'aria-invalid': invalid('limit'),
+    value: f.limit,
+  });
+  select.addEventListener('change', () => { f.category = select.value; });
+  limit.addEventListener('input', () => { f.limit = limit.value; });
+
+  const save = el('button', { type: 'submit', class: 'dash-btn dash-btn-accent', disabled: budgetUi.busy ? '' : null, 'data-dash-focus': 'budget-save' }, budgetUi.busy ? 'Saving…' : 'Save budget');
+  const cancel = el('button', { type: 'button', class: 'dash-btn', disabled: budgetUi.busy ? '' : null, 'data-dash-focus': 'budget-cancel' }, 'Cancel');
+  const close = () => {
+    if (budgetUi.busy) return;
+    const back = editing ? `budget-edit-${f.editingId}` : 'budget-add';
+    budgetUi.form = null;
+    redraw(back);
+  };
+  cancel.addEventListener('click', close);
+
+  const scopeNote = scope.mode === 'group'
+    ? `This budget is for the group ${ctx.groupName ? `“${ctx.groupName}”` : ''}. Every member sees it, and it counts what all members spend.`
+    : 'This budget is just for you and counts only your own expenses.';
+  const form = el('form', { class: 'dash-bform', novalidate: '', 'aria-labelledby': 'dash-b-title' }, [
+    el('h4', { id: 'dash-b-title', class: 'dash-bform-title' }, editing ? 'Edit budget' : 'Add budget'),
+    el('p', { class: 'dash-note' }, scopeNote),
+    el('div', { class: 'dash-bfield' }, [
+      el('label', { for: 'dash-b-category' }, 'Category'), select,
+      el('span', { class: 'dash-b-error', id: 'dash-b-category-err' }, f.errors.category || ''),
+    ]),
+    el('div', { class: 'dash-bfield' }, [
+      el('label', { for: 'dash-b-limit' }, 'Monthly limit (pesos)'), limit,
+      el('span', { class: 'dash-bhint', id: 'dash-b-limit-hint' }, 'For example 5,000 or 1,234.50.'),
+      el('span', { class: 'dash-b-error', id: 'dash-b-limit-err' }, f.errors.limit || ''),
+    ]),
+    f.formError ? el('p', { class: 'dash-b-error', role: 'alert' }, f.formError) : null,
+    el('div', { class: 'dash-budget-actions' }, [save, cancel]),
+  ].filter(Boolean));
+  form.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (budgetUi.busy) return;
+    f.errors = {};
+    f.formError = '';
+    const latest = live.ctx;
+    const { errors, budget } = checkBudget(
+      { me: latest.meId, groupId: scope.groupId, category: f.category, limit: f.limit, editingId: f.editingId },
+      latest.budgets, latest.myGroupIds,
+    );
+    if (!budget) {
+      f.errors = errors;
+      f.formError = errors.scope || 'Some fields need fixing. Nothing was saved.';
+      redraw(errors.category ? 'budget-category' : errors.limit ? 'budget-limit' : 'budget-save');
+      return;
+    }
+    budgetUi.busy = true;
+    save.disabled = true;
+    cancel.disabled = true;
+    const res = await runWrite(() => latest.onSaveBudget({ id: f.editingId, ...budget }));
+    budgetUi.busy = false;
+    if (res.ok) {
+      budgetUi.form = null;
+      budgetUi.status = `Saved the ${budget.category === null ? 'Overall' : categoryLabel(budget.category)} budget.`;
+      afterWrite(res, editing ? `budget-edit-${f.editingId}` : 'budget-add');
+    } else {
+      f.formError = `${res.message} Your input is still here: fix the problem and save again.`;
+      afterWrite(res, 'budget-limit');
+    }
+  });
+  return form;
+}
+
+// Forgets a half-finished form or confirmation when the scope changed or the budget it was about is gone.
+function syncBudgetUi(ctx, scope) {
+  const key = `${scope.mode}:${scope.groupId}`;
+  if (budgetUi.scopeKey !== key) budgetUi = freshBudgetUi(key);
+  const mineNow = (id) => (ctx.budgets || []).some((b) => b && b.id === id && b.owner_id === ctx.meId && b.deleted !== true);
+  if (budgetUi.form && budgetUi.form.editingId !== null && !mineNow(budgetUi.form.editingId)) budgetUi.form = null;
+  if (budgetUi.confirmingId !== null && !mineNow(budgetUi.confirmingId)) budgetUi.confirmingId = null;
+}
+
+function buildBudgets(ctx, view, period, today) {
+  const scope = { mode: view.group ? 'group' : 'personal', groupId: view.group ? (ctx.groupId || null) : null };
+  const when = budgetMonth(period, today);
+  const intro = view.group
+    ? `Group budgets for ${ctx.groupName || 'this group'} count what every member spent in ${when.label}.`
+    : `Your personal budgets count only your own expenses in ${when.label}.`;
+  const section = card('Budgets vs actual', `${intro} Limits are monthly and only expenses count.`);
+  if (when.note) section.append(el('p', { class: 'dash-note' }, when.note));
+
+  if (ctx.budgetsError) {
+    section.append(el('p', { class: 'dash-b-error', role: 'alert' }, `Budgets could not be loaded: ${ctx.budgetsError}`));
+    if (typeof ctx.onRetryBudgets === 'function') {
+      const retry = el('button', { type: 'button', class: 'dash-btn' }, 'Try again');
+      retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Loading…'; ctx.onRetryBudgets(); });
+      section.append(retry);
+    }
+    return section;
+  }
+
+  const canEdit = typeof ctx.onSaveBudget === 'function' && typeof ctx.onDeleteBudget === 'function';
+  const usages = usageList(visibleBudgets(ctx.budgets, scope, ctx.meId), view.txns, when.month, view.members.map((m) => m.id));
+  if (usages.length === 0) {
+    section.append(plainNote(view.group ? 'This group has no budgets yet.' : 'You have no personal budgets yet.'));
+  } else {
+    section.append(el('ul', { class: 'dash-budgets', 'aria-label': `Budgets for ${when.label}` }, usages.map((u) => budgetRow(ctx, u, canEdit))));
+  }
+  if (budgetUi.status) section.append(el('p', { class: 'dash-note', role: 'status' }, budgetUi.status));
+
+  if (canEdit) {
+    if (budgetUi.form) {
+      section.append(budgetForm(ctx, scope));
+    } else {
+      const add = el('button', { type: 'button', class: 'dash-btn dash-btn-accent', 'data-dash-focus': 'budget-add' }, 'Add budget');
+      add.addEventListener('click', () => {
+        if (budgetUi.busy) return;
+        budgetUi.status = '';
+        budgetUi.confirmingId = null;
+        budgetUi.form = { editingId: null, category: '', limit: '', errors: {}, formError: '' };
+        redraw('budget-category');
+      });
+      section.append(add);
+    }
+  }
+  return section;
+}
+
 // --- entry point -----------------------------------------------------------------------------------
 
 export function renderDashboard(root, ctx) {
   const today = ctx.today || todayString();
   const view = scopeOf(ctx);
+  live.root = root;
+  live.ctx = ctx;
+  syncBudgetUi(ctx, { mode: view.group ? 'group' : 'personal', groupId: view.group ? (ctx.groupId || null) : null });
   const rerender = (focusKey) => {
     renderDashboard(root, ctx);
     const target = root.querySelector(`[data-dash-focus="${focusKey}"]:not([disabled])`) || root.querySelector('[data-dash-focus="select"]');
@@ -365,11 +634,11 @@ export function renderDashboard(root, ctx) {
   const summary = summarize(rows);
 
   if (summary.entries === 0) {
-    dash.append(buildEmpty(view, period, today, rerender), buildWallets(view));
+    dash.append(buildEmpty(view, period, today, rerender), buildBudgets(ctx, view, period, today), buildWallets(view));
   } else {
     const ids = assignSeries(view.members);
     const highlight = period.kind === 'month' ? period.month - 1 : -1;
-    dash.append(buildTiles(summary, label), buildMonthly(view, period));
+    dash.append(buildTiles(summary, label), buildBudgets(ctx, view, period, today), buildMonthly(view, period));
     const pair = el('div', { class: 'dash-pair' });
     pair.append(buildCategories(rows, summary, label));
     pair.append(view.group ? buildMembers(view, rows, label, ids) : buildWallets(view));

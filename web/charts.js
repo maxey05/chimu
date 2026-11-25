@@ -299,6 +299,34 @@ export function barList({ label, rows, valueLabel = 'spent' }) {
   return plot;
 }
 
+// --- budget progress bar ---------------------------------------------------------------------------
+
+const PROGRESS_W = 600;
+const PROGRESS_H = 16;
+const PROGRESS_BAR = 12;
+
+// One budget's progress: a track, a fill and a tick at the 80% warning mark. fraction is 0..1 and is
+// clamped here too, so a budget that is 125% used fills the track and stops. tone is 'ok', 'warn' or
+// 'over' and only picks the fill's color (dashboard.css); the words next to the bar carry the meaning,
+// so the bar itself is hidden from screen readers.
+export function progressBar({ fraction, tone, warnAt = 0.8 }) {
+  const clamped = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
+  const y = (PROGRESS_H - PROGRESS_BAR) / 2;
+  const svg = svgEl('svg', {
+    class: 'dash-progress', viewBox: `0 0 ${PROGRESS_W} ${PROGRESS_H}`, 'aria-hidden': 'true', focusable: 'false',
+  });
+  svg.append(svgEl('rect', { class: 'dash-track', x: 0, y, width: PROGRESS_W, height: PROGRESS_BAR, rx: RADIUS }));
+  if (clamped > 0) {
+    const w = Math.max(round1(clamped * PROGRESS_W), 2);
+    svg.append(svgEl('path', { class: `dash-bar dash-lvl-${tone}`, d: rowPath(0, y, w, PROGRESS_BAR) }));
+  }
+  if (warnAt !== null) {
+    const x = round1(warnAt * PROGRESS_W);
+    svg.append(svgEl('line', { class: 'dash-progress-tick', x1: x, x2: x, y1: 0, y2: PROGRESS_H }));
+  }
+  return svg;
+}
+
 // --- legend and table twin -------------------------------------------------------------------------
 
 // series: [{ name, slot, tag }]. A numbered chip plus the name: identity by mark and word, not by color.
