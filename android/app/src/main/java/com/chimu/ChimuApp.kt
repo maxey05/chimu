@@ -26,6 +26,10 @@ class ChimuApp : Application() {
     lateinit var autoLog: AutoLogSettings
         private set
 
+    /** The user's recurring rules: create, edit, pause, delete (RFC-010). The server logs the entries; the phone reminds. */
+    lateinit var recurring: RecurringRepo
+        private set
+
     private lateinit var intake: PaymentIntake
 
     /** For work that must outlive a screen or a service callback: logging an incoming notification or SMS. */
@@ -50,7 +54,9 @@ class ChimuApp : Application() {
         groups = GroupManager(SupaGroupApi, afterChange = sync::afterMembershipChange)
         autoLog = AutoLogSettings(prefs)
         intake = PaymentIntake(InboxStore(db), reader = SupabaseReader, online = { Connectivity.isOnline(this) })
+        recurring = RecurringRepo(RecurringStore(db), onChanged = sync::onLocalChange)
         if (Supa.isConfigured) SyncWorker.schedule(this)
+        if (Supa.isConfigured) ReminderWorker.schedule(this) // daily, reads only what is on the phone (RFC-010)
     }
 
     /**
