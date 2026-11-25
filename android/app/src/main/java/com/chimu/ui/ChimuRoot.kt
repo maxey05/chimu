@@ -43,10 +43,12 @@ private const val GROUP_JOIN = "group_join"
 private const val GROUP_TXN = "group_txn"
 private const val MORE = "more"
 private const val WALLETS = "wallets"
+private const val BUDGETS = "budgets"
 private const val INBOX = "inbox"
 private const val AUTO_LOG = "autolog"
 private const val TXN_FORM = "txn"
 private const val WALLET_FORM = "wallet"
+private const val BUDGET_FORM = "budget"
 
 private class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -128,6 +130,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     onAdd = { nav.navigate("$TXN_FORM/$NEW_ID") },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
+                    onBudgets = { nav.navigate(BUDGETS) },
                 )
             }
             composable(TRANSACTIONS) {
@@ -159,6 +162,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     app,
                     identity,
                     onWallets = { nav.navigate(WALLETS) },
+                    onBudgets = { nav.navigate(BUDGETS) },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
                 )
@@ -191,6 +195,20 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
                 WalletFormScreen(app, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
+            }
+            composable(BUDGETS) {
+                BudgetsScreen(
+                    app,
+                    identity,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { id -> nav.navigate("$BUDGET_FORM/$id") },
+                )
+            }
+            composable(
+                route = "$BUDGET_FORM/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                BudgetFormScreen(app, identity, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
             }
         }
     }

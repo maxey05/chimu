@@ -41,7 +41,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.chimu.BudgetRules
+import com.chimu.BudgetText
+import com.chimu.BudgetUsage
 import com.chimu.ChimuApp
+import com.chimu.GroupSnapshot
 import com.chimu.Identity
 import com.chimu.InboxRules
 import com.chimu.Ledger
@@ -60,16 +64,29 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: () -> Unit, onAutoLog: () -> Unit) {
+fun HomeScreen(
+    app: ChimuApp,
+    identity: Identity,
+    onAdd: () -> Unit,
+    onInbox: () -> Unit,
+    onAutoLog: () -> Unit,
+    onBudgets: () -> Unit,
+) {
     val txns by app.repo.txns.collectAsState()
     val inbox by app.repo.inbox.collectAsState()
     val enabledApps by app.autoLog.enabledPackages.collectAsState()
     val senders by app.autoLog.senders.collectAsState()
     val onboardingDismissed by app.autoLog.onboardingDismissed.collectAsState()
     val sync by app.sync.status.collectAsState()
+    val budgets by app.repo.budgets.collectAsState()
+    val groupSnapshot by app.repo.groups.collectAsState()
     val month = remember { YearMonth.now().toString() } // `2026-11`, the same shape as a stored date's first 7 characters
     val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
     val topCategories = remember(txns, month, identity.userId) { TopCategories.top(txns, month, identity.userId) }
+    // The three budgets closest to (or past) their limit this month; the same usage rules as the Budgets screen and the alerts.
+    val topBudgets = remember(budgets, txns, groupSnapshot, month, identity.userId) {
+        BudgetRules.top(BudgetRules.usageList(identity.userId, budgets, txns, groupSnapshot, month), HOME_BUDGETS)
+    }
     val scanner = rememberReceiptScanner(app)
 
     // Pull down to sync. The Sync now button below does the same, for anyone who doesn't find the gesture.
@@ -107,6 +124,11 @@ fun HomeScreen(app: ChimuApp, identity: Identity, onAdd: () -> Unit, onInbox: ()
 
             Spacer(Modifier.height(16.dp))
             TopCategoriesCard(topCategories, totals.spent)
+
+            if (topBudgets.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                BudgetsCard(topBudgets, groupSnapshot, identity.userId, onBudgets)
+            }
 
             if (inbox.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
@@ -189,6 +211,41 @@ private fun TopCategoriesCard(entries: List<CategorySpend>, totalSpent: Long) {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** How many budgets Home lists; the rest are one tap away under See all. */
+private const val HOME_BUDGETS = 3
+
+/**
+ * "Budgets this month" (RFC-009): the budgets nearest their limit, each with its bar, the amounts and a
+ * status in words (never colour alone, RULES 21). Each row is read out as one sentence by a screen
+ * reader. Only drawn when there is at least one budget to show.
+ */
+@Composable
+private fun BudgetsCard(usages: List<BudgetUsage>, snapshot: GroupSnapshot, me: String, onSeeAll: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Budgets this month", style = MaterialTheme.typography.labelLarge)
+            for (usage in usages) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp)
+                        .semantics(mergeDescendants = true) { contentDescription = BudgetFormRules.rowDescription(usage, snapshot, me) },
+                ) {
+                    Text(
+                        "${BudgetText.title(usage, snapshot)} · ${BudgetText.scope(usage.budget, snapshot)}",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    BudgetProgress(usage, Modifier.padding(top = 6.dp))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onClick = onSeeAll, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
+                Text("See all budgets")
             }
         }
     }

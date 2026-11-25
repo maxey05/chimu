@@ -35,7 +35,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit, onInbox: () -> Unit, onAutoLog: () -> Unit) {
+fun MoreScreen(
+    app: ChimuApp,
+    identity: Identity,
+    onWallets: () -> Unit,
+    onBudgets: () -> Unit,
+    onInbox: () -> Unit,
+    onAutoLog: () -> Unit,
+) {
     val inbox by app.repo.inbox.collectAsState()
     var confirmSignOut by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -52,38 +59,13 @@ fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit, onInbox
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp),
         )
         HorizontalDivider()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onWallets)
-                .heightIn(min = 64.dp)
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Wallets", style = MaterialTheme.typography.bodyLarge)
-        }
+        MoreRow("Wallets", onWallets)
         HorizontalDivider()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onInbox)
-                .heightIn(min = 64.dp)
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(if (inbox.isEmpty()) "Inbox" else "Inbox (${inbox.size} to check)", style = MaterialTheme.typography.bodyLarge)
-        }
+        MoreRow("Budgets", onBudgets)
         HorizontalDivider()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onAutoLog)
-                .heightIn(min = 64.dp)
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Auto-log payments", style = MaterialTheme.typography.bodyLarge)
-        }
+        MoreRow(if (inbox.isEmpty()) "Inbox" else "Inbox (${inbox.size} to check)", onInbox)
+        HorizontalDivider()
+        MoreRow("Auto-log payments", onAutoLog)
         HorizontalDivider()
 
         Column(Modifier.padding(20.dp)) {
@@ -132,5 +114,20 @@ fun MoreScreen(app: ChimuApp, identity: Identity, onWallets: () -> Unit, onInbox
             },
             dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Stay signed in") } },
         )
+    }
+}
+
+/** One tappable line of the More list. */
+@Composable
+private fun MoreRow(label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 64.dp)
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
     }
 }
