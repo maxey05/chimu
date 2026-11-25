@@ -1,6 +1,7 @@
 package com.chimu
 
 import android.app.Application
+import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +39,14 @@ class ChimuApp : Application() {
         // The manager reloads the screens' data through `repo` after a sync; the repo asks the
         // manager to sync after a save. `repo` is only read when a sync finishes, never during setup.
         sync = SyncManager(LocalStore(db, prefs), prefs, account, onSynced = { repo.refresh() })
-        repo = Repo(db, prefs, onChanged = sync::onLocalChange)
+        // Budget alerts (RFC-009): the repo hands over fresh data after every save and every sync. The notifier is only
+        // asked when a budget reaches a new level, and its answer decides whether that level is recorded as sent.
+        val budgetAlerts = BudgetAlerts(PrefsAlertStore(prefs), post = { BudgetNotifier.post(this, it) })
+        repo = Repo(
+            db, prefs,
+            onChanged = sync::onLocalChange,
+            onReloaded = { me, budgets, txns, groups -> budgetAlerts.checkAll(me, budgets, txns, groups, LocalDate.now()) },
+        )
         groups = GroupManager(SupaGroupApi, afterChange = sync::afterMembershipChange)
         autoLog = AutoLogSettings(prefs)
         intake = PaymentIntake(InboxStore(db), reader = SupabaseReader, online = { Connectivity.isOnline(this) })
