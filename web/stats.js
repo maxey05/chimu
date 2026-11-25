@@ -201,3 +201,105 @@ export function periodOptions(txns, kind, today) {
   }));
 }
 
+// --- savings goals (RFC-011) ------------------------------------------------------------------------------
+// Same rules as the phone's Goals.kt (GoalRules); the parity vector in test-goals.js is the one GoalsTest.kt holds.
+//   * a goal is { id, owner_id, name, target (centavos), deadline ('YYYY-MM-DD' or null), wallet_id, deleted };
+//   * progress = the balance of the goal's savings wallet (walletBalances above) against the target;
+//   * percent = floor(saved * 100 / target), 0 when saved is not above 0 or the target is 0 or less. It can pass 100;
+//     the bar stops at full width and the text keeps the true number;
+//   * left = max(target - saved, 0); reached = target > 0 and saved >= target;
+//   * whole months to the deadline = calendar-month difference, minus 1 when the deadline's day of the month is
+//     earlier than today's (that last month is not complete), never below 1 (this month and today count as 1);
+//   * needed per month = left / months rounded UP to the centavo, so that many payments always reach the goal.
+// A plan is { kind } with kind 'wallet' (savings wallet archived or unknown), 'notarget', 'reached', 'nodeadline',
+// 'overdue' (deadline before today) or 'monthly' (plus perMonth and months), decided in that order.
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// True for a real calendar date written YYYY-MM-DD (2027-02-30 is not).
+export function isDateText(text) {
+  const m = typeof text === 'string' ? ISO_DATE.exec(text) : null;
+  if (!m) return false;
+  const d = new Date(0);
+  d.setUTCFullYear(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
+
+// Exact integer arithmetic (BigInt), so the answer never depends on float rounding.
+export function goalPercent(saved, target) {
+  if (!(target > 0) || !(saved > 0)) return 0;
+  return Number((BigInt(saved) * 100n) / BigInt(target));
+}
+
+export function goalLeft(saved, target) {
+  return target > 0 ? Math.max(target - saved, 0) : 0;
+}
+
+export function goalReached(saved, target) {
+  return target > 0 && saved >= target;
+}
+
+// Whole months from `today` to `deadline` (both YYYY-MM-DD); null when either is not a real date.
+export function monthsLeft(today, deadline) {
+  if (!isDateText(today) || !isDateText(deadline)) return null;
+  const t = ISO_DATE.exec(today);
+  const d = ISO_DATE.exec(deadline);
+  let months = (Number(d[1]) - Number(t[1])) * 12 + (Number(d[2]) - Number(t[2]));
+  if (Number(d[3]) < Number(t[3])) months -= 1;
+  return Math.max(months, 1);
+}
+
+export function neededPerMonth(left, months) {
+  if (!(left > 0) || !(months > 0)) return 0;
+  return Math.floor((left + months - 1) / months);
+}
+
+// `saved` is null when the goal's wallet is archived or unknown.
+export function goalPlan(target, saved, deadline, today) {
+  if (saved === null || saved === undefined) return { kind: 'wallet' };
+  if (!(target > 0)) return { kind: 'notarget' };
+  if (goalReached(saved, target)) return { kind: 'reached' };
+  if (!isDateText(deadline) || !isDateText(today)) return { kind: 'nodeadline' };
+  if (deadline < today) return { kind: 'overdue' };
+  const months = monthsLeft(today, deadline);
+  return { kind: 'monthly', perMonth: neededPerMonth(goalLeft(saved, target), months), months };
+}
+
+// One goal against its wallet's balance (null = wallet archived or unknown).
+export function goalProgress(goal, balance, today) {
+  const target = normCentavos(goal.target);
+  const known = balance !== null && balance !== undefined;
+  const saved = known ? balance : 0;
+  return {
+    goal,
+    target,
+    saved,
+    left: known ? goalLeft(saved, target) : Math.max(target, 0),
+    percent: goalPercent(saved, target),
+    reached: known && goalReached(saved, target),
+    plan: goalPlan(target, known ? saved : null, goal.deadline || null, today),
+    barFraction: target > 0 ? Math.min(1, Math.max(0, saved / target)) : 0,
+  };
+}
+
+// Progress for each goal, in the order given. The wallet must be among `wallets` and live (archived wallets get no
+// balance, so their goals read 'wallet'). Balances are all-time, like the wallet list.
+export function goalsProgress(goals, wallets, txns, today) {
+  const balance = new Map(walletBalances(wallets, txns).map((w) => [w.id, w.balance]));
+  return (goals || []).map((g) => goalProgress(g, balance.has(g.wallet_id) ? balance.get(g.wallet_id) : null, today));
+}
+
+// The live goals owned by anyone in `ownerIds` (a Set of ids), soonest deadline first, goals without one last, then by
+// name (ignoring case), then id. RLS also lets a person read goals of people in other groups; those never get through.
+export function visibleGoals(goals, ownerIds) {
+  const lower = (s) => String(s).toLowerCase();
+  return (goals || [])
+    .filter((g) => g && g.deleted !== true && ownerIds.has(g.owner_id))
+    .sort((a, b) => {
+      const da = a.deadline || null;
+      const db = b.deadline || null;
+      if ((da === null) !== (db === null)) return da === null ? 1 : -1;
+      if (da !== db) return da < db ? -1 : 1;
+      if (lower(a.name) !== lower(b.name)) return lower(a.name) < lower(b.name) ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+}
