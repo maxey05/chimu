@@ -23,7 +23,7 @@ const EXPENSE_SLUGS = new Set(CATEGORIES.expense.map((c) => c.slug));
 const pad2 = (n) => String(n).padStart(2, '0');
 
 // Same test as csvTotals: a row is live unless it is explicitly deleted.
-function isLive(t) {
+export function isLive(t) {
   return !!t && t.deleted !== true;
 }
 
@@ -200,3 +200,4 @@ export function periodOptions(txns, kind, today) {
     kind: 'month', year: Number(key.slice(0, 4)), month: Number(key.slice(5, 7)),
   }));
 }
+
