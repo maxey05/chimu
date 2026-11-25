@@ -320,7 +320,7 @@ export function progressBar({ fraction, tone, warnAt = 0.8 }) {
     const w = Math.max(round1(clamped * PROGRESS_W), 2);
     svg.append(svgEl('path', { class: `dash-bar dash-lvl-${tone}`, d: rowPath(0, y, w, PROGRESS_BAR) }));
   }
-  if (warnAt !== null) {
+  if (warnAt !== null) { // a goal has no warning mark (RFC-011): it passes warnAt: null
     const x = round1(warnAt * PROGRESS_W);
     svg.append(svgEl('line', { class: 'dash-progress-tick', x1: x, x2: x, y1: 0, y2: PROGRESS_H }));
   }

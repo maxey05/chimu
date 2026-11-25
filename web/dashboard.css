@@ -225,6 +225,17 @@
 .dash-b-error:empty { display: none; }
 .dash-budgets + .dash-btn, .dash-card > .dash-btn { margin: 8px 0 6px; }
 
+/* --- savings goals (RFC-011) ---------------------------------------------------------------------- */
+.dash-goals li { padding: 12px 0; border-bottom: 1px solid var(--dash-gridline); }
+.dash-goals li:last-child { border-bottom: 0; }
+.dash-goal-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.dash-goal-name { font-weight: 650; overflow-wrap: anywhere; }
+.dash-goal-status { margin-left: auto; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.dash-goal-text, .dash-goal-line { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dash-goal-line, .dash-goal-wallet { color: var(--dash-ink2); font-size: 13px; }
+.dash-lvl-done { fill: var(--dash-s6); }
+.dash-goal-owner { margin: 14px 0 0; font-size: 15px; font-weight: 650; }
+.dash-goal-owner .dash-goal-ro { margin-left: 8px; color: var(--dash-ink2); font-size: 13px; font-weight: 500; }
 
 /* --- forced colors (high-contrast mode): hue is gone, so shape and outline carry the marks ------- */
 @media (forced-colors: active) {

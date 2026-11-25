@@ -14,7 +14,10 @@
 //           groupId?, myGroupIds?: [ids of the groups I am in],
 //           budgets?: [budget rows of this scope, not deleted], budgetsError?: 'why they did not load',
 //           onSaveBudget?({ id|null, groupId, category, monthlyLimit }), onDeleteBudget?(id),
-//           onRetryBudgets?() }
+//           onRetryBudgets?(),
+//           // Savings goals (RFC-011), read-only. Optional; goals have no group column, so these are the goals of
+//           // everyone in `members` (just me in Personal view).
+//           goals?: [goal rows of this scope, not deleted], goalsError?: 'why they did not load', onRetryGoals?() }
 //   The two save/delete callbacks do the write (app.js wires them to data.js) and answer
 //   { ok: true, budgets } or { ok: false, message, budgets? } with the host's new list of budgets, so this
 //   file still never talks to Supabase.
@@ -28,7 +31,9 @@ import {
 import {
   MONTH_NAMES, MONTH_SHORT, summarize, inPeriod, monthlySpend, spendByCategory, memberStats,
   monthlyByMember, walletBalances, periodsAvailable, periodOptions, periodKey, periodLabel,
+  goalsProgress, visibleGoals,
 } from './stats.js';
+import { goalSummary, goalStatus, goalPlanText, goalDeadlineText } from './goals.js';
 import {
   el, columnChart, stackedColumnChart, barList, legend, table, dataTable, percentText, progressBar,
 } from './charts.js';
@@ -587,6 +592,66 @@ function buildBudgets(ctx, view, period, today) {
   return section;
 }
 
+// --- savings goals (RFC-011) ----------------------------------------------------------------------------
+
+function goalRow(p, walletName) {
+  const li = el('li', { class: `dash-goal dash-goal-${p.reached ? 'done' : 'going'}` }, [
+    el('div', { class: 'dash-goal-head' }, [
+      el('span', { class: 'dash-goal-name' }, p.goal.name),
+      el('span', { class: 'dash-goal-status' }, goalStatus(p)),
+    ]),
+    progressBar({ fraction: p.barFraction, tone: p.reached ? 'done' : 'ok', warnAt: null }),
+    el('p', { class: 'dash-goal-text' }, goalSummary(p)),
+  ]);
+  const plan = goalPlanText(p);
+  const deadline = goalDeadlineText(p.goal);
+  if (plan) li.append(el('p', { class: 'dash-goal-line' }, plan));
+  if (deadline) li.append(el('p', { class: 'dash-goal-line' }, deadline));
+  if (walletName) li.append(el('p', { class: 'dash-goal-wallet' }, `Savings wallet: ${walletName}`));
+  return li;
+}
+
+// Goals are all-time progress (the savings wallet's balance now), so the period picker does not change them. Read-only:
+// they are made, edited and deleted on the phone. In group view each member's goals sit under their name.
+function buildGoals(ctx, view, today) {
+  const section = card('Savings goals', 'Progress is the balance of each goal’s savings wallet. Goals are set on the phone, so this list is read-only.');
+  if (ctx.goalsError) {
+    section.append(el('p', { class: 'dash-b-error', role: 'alert' }, `Goals could not be loaded: ${ctx.goalsError}`));
+    if (typeof ctx.onRetryGoals === 'function') {
+      const retry = el('button', { type: 'button', class: 'dash-btn' }, 'Try again');
+      retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Loading…'; ctx.onRetryGoals(); });
+      section.append(retry);
+    }
+    return section;
+  }
+  const owners = new Set(view.members.map((m) => m.id));
+  if (!view.group && ctx.meId) owners.add(ctx.meId);
+  const goals = visibleGoals(ctx.goals, view.group ? owners : new Set(ctx.meId ? [ctx.meId] : []));
+  if (goals.length === 0) {
+    section.append(plainNote(view.group
+      ? 'No member has a savings goal yet.'
+      : 'You have no savings goals yet. Add one on your phone: More, then Goals.'));
+    return section;
+  }
+  const names = new Map(view.wallets.map((w) => [w.id, w.name]));
+  const progress = goalsProgress(goals, view.wallets, view.allTxns, today);
+  const listFor = (rows) => el('ul', { class: 'dash-goals', 'aria-label': 'Savings goals' },
+    rows.map((p) => goalRow(p, names.get(p.goal.wallet_id) || null)));
+  if (!view.group) {
+    section.append(listFor(progress));
+    return section;
+  }
+  for (const m of view.members) {
+    const mine = progress.filter((p) => p.goal.owner_id === m.id);
+    if (mine.length === 0) continue;
+    section.append(
+      el('h4', { class: 'dash-goal-owner' }, [m.name, m.id === ctx.meId ? '' : el('span', { class: 'dash-goal-ro' }, 'read-only')]),
+      listFor(mine),
+    );
+  }
+  return section;
+}
+
 // --- entry point -----------------------------------------------------------------------------------
 
 export function renderDashboard(root, ctx) {
@@ -634,11 +699,11 @@ export function renderDashboard(root, ctx) {
   const summary = summarize(rows);
 
   if (summary.entries === 0) {
-    dash.append(buildEmpty(view, period, today, rerender), buildBudgets(ctx, view, period, today), buildWallets(view));
+    dash.append(buildEmpty(view, period, today, rerender), buildBudgets(ctx, view, period, today), buildGoals(ctx, view, today), buildWallets(view));
   } else {
     const ids = assignSeries(view.members);
     const highlight = period.kind === 'month' ? period.month - 1 : -1;
-    dash.append(buildTiles(summary, label), buildBudgets(ctx, view, period, today), buildMonthly(view, period));
+    dash.append(buildTiles(summary, label), buildBudgets(ctx, view, period, today), buildGoals(ctx, view, today), buildMonthly(view, period));
     const pair = el('div', { class: 'dash-pair' });
     pair.append(buildCategories(rows, summary, label));
     pair.append(view.group ? buildMembers(view, rows, label, ids) : buildWallets(view));
