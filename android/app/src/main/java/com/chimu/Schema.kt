@@ -15,7 +15,7 @@ package com.chimu
  * matching Supabase migration (RULES 11).
  */
 object Schema {
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** Version 1 -> 2 (RFC-004): why the last try at reading a scanned receipt failed. Phone only, never synced. */
     val UPGRADE_1_TO_2: List<String> = listOf("ALTER TABLE transactions ADD COLUMN extract_error TEXT")
@@ -28,6 +28,12 @@ object Schema {
         "ALTER TABLE transactions ADD COLUMN raw_text TEXT",
         "ALTER TABLE transactions ADD COLUMN captured_at INTEGER",
     )
+
+    /**
+     * Version 3 -> 4 (RFC-010): the day of the month a monthly or yearly recurring rule is meant for, so a rule for the 31st
+     * goes Feb 28 and back to Mar 31 instead of staying on the 28th. Synced; matches `recurring.anchor_day` in 0003_recurring.sql.
+     */
+    val UPGRADE_3_TO_4: List<String> = listOf("ALTER TABLE recurring ADD COLUMN anchor_day INTEGER")
 
     val CREATE_STATEMENTS: List<String> = listOf(
         // Not synced as syncable rows: written by trigger / RPC on the server, cached read-only here.
@@ -136,7 +142,8 @@ object Schema {
             frequency          TEXT NOT NULL,
             next_date          TEXT NOT NULL,
             remind_days_before INTEGER NOT NULL DEFAULT 1,
-            active             INTEGER NOT NULL DEFAULT 1
+            active             INTEGER NOT NULL DEFAULT 1,
+            anchor_day         INTEGER
         )
         """,
         """

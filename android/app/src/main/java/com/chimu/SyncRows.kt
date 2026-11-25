@@ -109,6 +109,7 @@ object SyncTables {
             Col("next_date", Kind.TEXT, nullable = false),
             Col("remind_days_before", Kind.INT, nullable = false),
             Col("active", Kind.BOOL, nullable = false),
+            Col("anchor_day", Kind.INT),
         ),
     )
 

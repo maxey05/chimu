@@ -28,6 +28,7 @@ class Db(context: Context) :
         // DESIGN.md update (RULES 11). Steps are cumulative, so an old install walks through all of them.
         if (oldVersion < 2) Schema.UPGRADE_1_TO_2.forEach { db.execSQL(it) }
         if (oldVersion < 3) Schema.UPGRADE_2_TO_3.forEach { db.execSQL(it) }
+        if (oldVersion < 4) Schema.UPGRADE_3_TO_4.forEach { db.execSQL(it) }
     }
 
     // --- wallets -------------------------------------------------------------
