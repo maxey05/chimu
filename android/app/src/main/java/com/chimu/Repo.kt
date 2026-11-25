@@ -22,11 +22,18 @@ class Repo(
     private val prefs: SharedPreferences,
     /** Called after every local write, so the sync engine can send it soon (RFC-003). */
     private val onChanged: () -> Unit = {},
+    /**
+     * Called at the end of every reload, i.e. after each local save and each sync, with the open user's id, the budgets they
+     * can see, their own transactions and their groups. Budget alerts hang off it (RFC-009). It runs on the reloading thread,
+     * only while that user is still open, and nothing it throws can fail the save or the sync.
+     */
+    private val onReloaded: (me: String, budgets: List<Budget>, txns: List<Txn>, groups: GroupSnapshot) -> Unit = { _, _, _, _ -> },
 ) {
     private val _allWallets = MutableStateFlow<List<Wallet>>(emptyList())
     private val _txns = MutableStateFlow<List<Txn>>(emptyList())
     private val _inbox = MutableStateFlow<List<Txn>>(emptyList())
     private val _groups = MutableStateFlow(GroupSnapshot())
+    private val _budgets = MutableStateFlow<List<Budget>>(emptyList())
     private val _openOwner = MutableStateFlow<String?>(null)
 
     @Volatile
@@ -46,6 +53,12 @@ class Repo(
      * transactions. Read-only, filled by sync; empty when the user is in no group.
      */
     val groups: StateFlow<GroupSnapshot> = _groups.asStateFlow()
+
+    /**
+     * The budgets the open user may see (RFC-009): their own, and group mates' budgets for a group they are in, in display
+     * order ([BudgetRules.visible]). Others' personal budgets are never in here.
+     */
+    val budgets: StateFlow<List<Budget>> = _budgets.asStateFlow()
 
     /** The user id whose data is loaded, or null while nothing is open. */
     val openOwner: StateFlow<String?> = _openOwner.asStateFlow()
@@ -83,6 +96,7 @@ class Repo(
         _txns.value = emptyList()
         _inbox.value = emptyList()
         _groups.value = GroupSnapshot()
+        _budgets.value = emptyList()
     }
 
     /** Wallets that can be used for new entries. */
@@ -196,6 +210,31 @@ class Repo(
         done
     }
 
+    /**
+     * Adds or edits one of the open user's own budgets (RFC-009). Throws [IllegalArgumentException] with a message for the
+     * user when the draft is not allowed ([BudgetRules.check]) or the budget is someone else's; nothing is written then.
+     */
+    suspend fun saveBudget(budget: Budget) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        val current = _budgets.value.firstOrNull { it.id == budget.id }
+        require(current == null || current.ownerId == owner) { "That budget belongs to someone else, so you can't change it." }
+        BudgetRules.check(
+            owner, budget.groupId, budget.category, budget.monthlyLimit, budget.id, _budgets.value, _groups.value,
+        )?.let { throw IllegalArgumentException(it) }
+        val toSave = budget.copy(ownerId = owner, deleted = false)
+        if (current != null) db.updateBudget(toSave) else db.insertBudget(toSave)
+        reload(owner)
+        onChanged()
+    }
+
+    /** Deletes one of the open user's own budgets (a tombstone, so it syncs). Someone else's budget is left alone. */
+    suspend fun deleteBudget(id: String) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        db.deleteBudget(owner, id)
+        reload(owner)
+        onChanged()
+    }
+
     suspend fun deleteTxn(id: String) = withContext(Dispatchers.IO) {
         val owner = requireOwner()
         db.deleteTxn(owner, id)
@@ -212,7 +251,21 @@ class Repo(
         _allWallets.value = db.wallets(owner)
         _txns.value = db.txns(owner)
         _inbox.value = db.inboxTxns(owner)
-        _groups.value = loadGroups(owner)
+        val groups = loadGroups(owner)
+        _groups.value = groups
+        val budgets = BudgetRules.visible(owner, db.cachedBudgets(), groups)
+        _budgets.value = budgets
+        alertAfterReload(owner, budgets, groups)
+    }
+
+    /** Hands the fresh data to [onReloaded]. Alerts are a bonus: a failure here is dropped so it can never break a save or a sync. */
+    private fun alertAfterReload(owner: String, budgets: List<Budget>, groups: GroupSnapshot) {
+        if (ownerId != owner) return // signed out (or someone else signed in) while this reload ran
+        try {
+            onReloaded(owner, budgets, _txns.value, groups)
+        } catch (e: Exception) {
+            // Intentionally quiet: see above.
+        }
     }
 
     /** Skips the big read when the user is in no group; [GroupRules.snapshot] drops anything the user may not see. */

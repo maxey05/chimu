@@ -59,6 +59,40 @@ class Db(context: Context) :
         )
     }
 
+    // --- budgets (RFC-009) ---------------------------------------------------
+
+    /**
+     * Every live budget in the cache, other people's included: group mates' rows arrive through sync. Which of them the
+     * user may see is [BudgetRules.visible]'s job, not this query's.
+     */
+    fun cachedBudgets(): List<Budget> =
+        readableDatabase.query("budgets", null, BudgetSql.LIVE_WHERE, null, null, null, null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.toBudget()) } }
+
+    fun insertBudget(budget: Budget) {
+        val values = budgetEditValues(budget, System.currentTimeMillis()).apply {
+            put("id", budget.id)
+            put("owner_id", budget.ownerId)
+            put("deleted", 0)
+        }
+        writableDatabase.insertOrThrow("budgets", null, values)
+    }
+
+    /** Updates group, category and limit; id, owner and the tombstone never change here. */
+    fun updateBudget(budget: Budget) {
+        writableDatabase.update(
+            "budgets",
+            budgetEditValues(budget, System.currentTimeMillis()),
+            BudgetSql.OWN_ROW_WHERE,
+            arrayOf(budget.id, budget.ownerId),
+        )
+    }
+
+    /** Tombstone one of [ownerId]'s own budgets so it syncs as deleted (RULES 9). Never a hard delete. */
+    fun deleteBudget(ownerId: String, id: String) {
+        writableDatabase.execSQL(BudgetSql.TOMBSTONE, arrayOf<Any>(System.currentTimeMillis(), id, ownerId))
+    }
+
     // --- transactions --------------------------------------------------------
 
     /**
@@ -451,6 +485,14 @@ class Db(context: Context) :
         put("dirty", 1)
     }
 
+    private fun budgetEditValues(b: Budget, now: Long) = ContentValues().apply {
+        put("group_id", b.groupId)
+        put("category", b.category)
+        put("monthly_limit", b.monthlyLimit)
+        put("updated_at", now)
+        put("dirty", 1)
+    }
+
     private fun txnEditValues(t: Txn, now: Long) = ContentValues().apply {
         put("type", t.type.slug)
         put("wallet_id", t.walletId)
@@ -472,6 +514,16 @@ class Db(context: Context) :
         name = text("name"),
         type = WalletType.fromSlug(text("type")),
         openingBalance = number("opening_balance"),
+        updatedAt = number("updated_at"),
+        deleted = number("deleted") != 0L,
+    )
+
+    private fun Cursor.toBudget() = Budget(
+        id = text("id"),
+        ownerId = text("owner_id"),
+        groupId = textOrNull("group_id"),
+        category = textOrNull("category"),
+        monthlyLimit = number("monthly_limit"),
         updatedAt = number("updated_at"),
         deleted = number("deleted") != 0L,
     )
