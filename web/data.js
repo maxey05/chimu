@@ -37,6 +37,18 @@ export function normalizeWallet(row) {
   return { ...row, opening_balance: normCentavos(row.opening_balance), deleted: row.deleted === true };
 }
 
+// group_id and category stay null when empty: null means personal / overall.
+export function normalizeBudget(row) {
+  return {
+    ...row,
+    group_id: row.group_id || null,
+    category: row.category || null,
+    monthly_limit: normCentavos(row.monthly_limit),
+    updated_at: normCentavos(row.updated_at),
+    deleted: row.deleted === true,
+  };
+}
+
 // The groups I am in, who is in them, and everyone's display name. RLS already limits all three.
 export async function loadDirectory(client) {
   const groups = await fetchAllPages((a, b) =>
@@ -83,24 +95,63 @@ export async function loadScope(client, directory, me, scope) {
   };
 }
 
+// The budgets of one scope (RFC-009), live rows only. Personal = mine with no group; group = every budget of
+// that group, whoever owns it. RLS also lets me read other members' personal budgets and budgets of
+// groups I share with them, so the scope is filtered here as well as by the dashboard. A failed page
+// rejects, so the caller never shows part of the list as the whole list (RULES 20).
+export async function loadBudgets(client, me, scope) {
+  const rows = await fetchAllPages((a, b) => {
+    const q = client.from('budgets').select('*').eq('deleted', false);
+    const scoped = scope.mode === 'group' ? q.eq('group_id', scope.groupId) : q.eq('owner_id', me.id).is('group_id', null);
+    return scoped.order('id').range(a, b);
+  });
+  return rows.map(normalizeBudget).filter((b) => !b.deleted);
+}
+
 // Writes one of MY rows. The update is scoped by id and owner; RLS is the real gate. PostgREST answers
 // 200 with zero rows when RLS hides the row, so "no row came back" is treated as a refusal, never as success.
 // If the server's last-writer-wins guard kept a newer stored row, the returned updated_at differs from
 // what was sent: that is reported as `discarded` with the stored row.
-export async function updateOwnTxn(client, id, ownerId, changes, updatedAt) {
+async function updateOwn(client, table, normalize, noun, id, ownerId, changes, updatedAt) {
   const sent = { ...changes, updated_at: updatedAt };
-  const { data, error } = await client.from('transactions').update(sent)
+  const { data, error } = await client.from(table).update(sent)
     .eq('id', id).eq('owner_id', ownerId).select();
   if (error) return { ok: false, reason: 'error', message: error.message || String(error) };
-  if (!data || data.length === 0) return { ok: false, reason: 'refused', message: 'The server did not accept the change. This row may not be yours, or it may have been removed.' };
-  const row = normalizeTxn(data[0]);
-  if (row.updated_at !== updatedAt) return { ok: false, reason: 'discarded', row, message: 'A newer change to this row already exists (for example from the phone, or a clock that runs ahead), so yours was not applied.' };
+  if (!data || data.length === 0) return { ok: false, reason: 'refused', message: `The server did not accept the change. This ${noun} may not be yours, or it may have been removed.` };
+  const row = normalize(data[0]);
+  if (row.updated_at !== updatedAt) return { ok: false, reason: 'discarded', row, message: `A newer change to this ${noun} already exists (for example from the phone, or a clock that runs ahead), so yours was not applied.` };
   return { ok: true, row };
+}
+
+export function updateOwnTxn(client, id, ownerId, changes, updatedAt) {
+  return updateOwn(client, 'transactions', normalizeTxn, 'row', id, ownerId, changes, updatedAt);
 }
 
 // Delete = tombstone (RULES 9): deleted = true with a fresh updated_at.
 export function tombstoneTxn(client, id, ownerId, updatedAt) {
   return updateOwnTxn(client, id, ownerId, { deleted: true }, updatedAt);
+}
+
+// Budgets (RFC-009): the same write rules, for budgets I own. `changes` is { category, monthly_limit }.
+export function updateOwnBudget(client, id, ownerId, changes, updatedAt) {
+  return updateOwn(client, 'budgets', normalizeBudget, 'budget', id, ownerId, changes, updatedAt);
+}
+
+export function tombstoneBudget(client, id, ownerId, updatedAt) {
+  return updateOwnBudget(client, id, ownerId, { deleted: true }, updatedAt);
+}
+
+// A new budget of mine: a fresh id, owner = me, group_id null for a personal one. The insert returns the
+// stored row (.select()); if nothing comes back the server did not take it. RLS rejects a group I am not in.
+export async function createBudget(client, ownerId, { groupId, category, monthlyLimit }, updatedAt, id = globalThis.crypto.randomUUID()) {
+  const sent = {
+    id, owner_id: ownerId, group_id: groupId || null, category: category || null,
+    monthly_limit: monthlyLimit, updated_at: updatedAt, deleted: false,
+  };
+  const { data, error } = await client.from('budgets').insert(sent).select();
+  if (error) return { ok: false, reason: 'error', message: error.message || String(error) };
+  if (!data || data.length === 0) return { ok: false, reason: 'refused', message: 'The server did not accept the new budget. You may not be in that group any more.' };
+  return { ok: true, row: normalizeBudget(data[0]) };
 }
 
 export async function signedPhotoUrl(client, path, seconds = 600) {
