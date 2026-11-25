@@ -34,6 +34,7 @@ class Repo(
     private val _inbox = MutableStateFlow<List<Txn>>(emptyList())
     private val _groups = MutableStateFlow(GroupSnapshot())
     private val _budgets = MutableStateFlow<List<Budget>>(emptyList())
+    private val _goals = MutableStateFlow<List<Goal>>(emptyList())
     private val _openOwner = MutableStateFlow<String?>(null)
 
     @Volatile
@@ -59,6 +60,9 @@ class Repo(
      * order ([BudgetRules.visible]). Others' personal budgets are never in here.
      */
     val budgets: StateFlow<List<Budget>> = _budgets.asStateFlow()
+
+    /** The open user's own live goals (RFC-011), soonest deadline first. Other members' goals are never in here. */
+    val goals: StateFlow<List<Goal>> = _goals.asStateFlow()
 
     /** The user id whose data is loaded, or null while nothing is open. */
     val openOwner: StateFlow<String?> = _openOwner.asStateFlow()
@@ -97,6 +101,7 @@ class Repo(
         _inbox.value = emptyList()
         _groups.value = GroupSnapshot()
         _budgets.value = emptyList()
+        _goals.value = emptyList()
     }
 
     /** Wallets that can be used for new entries. */
@@ -235,6 +240,32 @@ class Repo(
         onChanged()
     }
 
+    /**
+     * Adds or edits one of the open user's own goals (RFC-011). When [newWallet] is given (a savings wallet made for this goal)
+     * it is saved in the same database transaction, so a failure never leaves an orphan wallet. Throws
+     * [IllegalArgumentException] with a message for the user when the goal's wallet is not allowed ([GoalRules.checkWallet]) or
+     * the goal is someone else's; nothing is written then.
+     */
+    suspend fun saveGoal(goal: Goal, newWallet: Wallet? = null) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        val current = _goals.value.firstOrNull { it.id == goal.id }
+        require(current == null || current.ownerId == owner) { "That goal belongs to someone else, so you can't change it." }
+        val wallet = newWallet?.copy(ownerId = owner)
+        GoalRules.checkWallet(goal.walletId, wallet, _allWallets.value)?.let { throw IllegalArgumentException(it) }
+        val walletExists = wallet != null && _allWallets.value.any { it.id == wallet.id }
+        db.saveGoal(goal.copy(ownerId = owner, deleted = false), isNew = current == null, newWallet = wallet, walletExists = walletExists)
+        reload(owner)
+        onChanged()
+    }
+
+    /** Deletes one of the open user's own goals (a tombstone, so it syncs). Its wallet and money are not touched. */
+    suspend fun deleteGoal(id: String) = withContext(Dispatchers.IO) {
+        val owner = requireOwner()
+        db.deleteGoal(owner, id)
+        reload(owner)
+        onChanged()
+    }
+
     suspend fun deleteTxn(id: String) = withContext(Dispatchers.IO) {
         val owner = requireOwner()
         db.deleteTxn(owner, id)
@@ -255,6 +286,7 @@ class Repo(
         _groups.value = groups
         val budgets = BudgetRules.visible(owner, db.cachedBudgets(), groups)
         _budgets.value = budgets
+        _goals.value = GoalRules.visible(owner, db.goals(owner))
         alertAfterReload(owner, budgets, groups)
     }
 
