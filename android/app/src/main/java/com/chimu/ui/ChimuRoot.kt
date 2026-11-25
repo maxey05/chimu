@@ -49,6 +49,8 @@ private const val AUTO_LOG = "autolog"
 private const val TXN_FORM = "txn"
 private const val WALLET_FORM = "wallet"
 private const val BUDGET_FORM = "budget"
+private const val RECURRING = "recurring"
+private const val RECURRING_FORM = "recurring_item"
 
 private class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -163,6 +165,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     identity,
                     onWallets = { nav.navigate(WALLETS) },
                     onBudgets = { nav.navigate(BUDGETS) },
+                    onRecurring = { nav.navigate(RECURRING) },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
                 )
@@ -209,6 +212,20 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
                 BudgetFormScreen(app, identity, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
+            }
+            composable(RECURRING) {
+                RecurringScreen(
+                    app,
+                    identity,
+                    onBack = { nav.popBackStack() },
+                    onOpen = { id -> nav.navigate("$RECURRING_FORM/$id") },
+                )
+            }
+            composable(
+                route = "$RECURRING_FORM/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                RecurringFormScreen(app, identity, entry.arguments?.getString("id") ?: NEW_ID, onClose = { nav.popBackStack() })
             }
         }
     }
