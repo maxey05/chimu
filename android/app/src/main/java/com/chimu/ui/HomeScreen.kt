@@ -1,33 +1,43 @@
 package com.chimu.ui
 
-import android.content.ActivityNotFoundException
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
+import android.provider.Settings
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,61 +45,126 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import com.chimu.BudgetRules
-import com.chimu.BudgetText
-import com.chimu.BudgetUsage
+import androidx.compose.ui.unit.sp
+import com.chimu.Balances
+import com.chimu.Categories
 import com.chimu.ChimuApp
-import com.chimu.GroupSnapshot
+import com.chimu.ExpenditureSeries
 import com.chimu.Identity
-import com.chimu.InboxRules
 import com.chimu.Ledger
 import com.chimu.Money
-import com.chimu.CategorySpend
-import com.chimu.ReceiptPhotos
-import com.chimu.SyncStatus
-import com.chimu.SyncText
-import com.chimu.TopCategories
+import com.chimu.SpendPeriod
+import com.chimu.Txn
+import com.chimu.TxnType
+import com.chimu.ui.theme.ChimuIcons
+import com.chimu.ui.theme.chimu
+import java.time.LocalDate
 import java.time.YearMonth
-import java.util.UUID
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
+private val EaseOutExpo = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+private val EaseOutCubic = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
+
+/** The startup animation plays once per app start. Coming back to Home from another tab shows it finished. */
+private object HomeIntro {
+    var played = false
+}
+
+/** Panel fade-and-rise from below: [a] runs 0 to 1. */
+private fun Modifier.rise(a: Animatable<Float, AnimationVector1D>): Modifier = graphicsLayer {
+    alpha = a.value
+    translationY = (1f - a.value) * 22.dp.toPx()
+}
+
+/**
+ * Home (Dusk design): welcome header with the profile pill, the balance card, the Expenditures chart and the
+ * latest three transactions. Budgets, Inbox, sync and auto-log setup live under More.
+ *
+ * Startup: the header appears first, the other panels follow 0.2 s later one after another, the total counts up
+ * and the chart line is drawn by a dot travelling along it. Android's "remove animations" setting turns all of it off.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     app: ChimuApp,
     identity: Identity,
-    onAdd: () -> Unit,
-    onInbox: () -> Unit,
-    onAutoLog: () -> Unit,
-    onBudgets: () -> Unit,
+    attention: Int,
+    onProfile: () -> Unit,
+    onBalanceDetails: () -> Unit,
+    onSeeAll: () -> Unit,
+    onOpenTxn: (String) -> Unit,
 ) {
     val txns by app.repo.txns.collectAsState()
-    val inbox by app.repo.inbox.collectAsState()
-    val enabledApps by app.autoLog.enabledPackages.collectAsState()
-    val senders by app.autoLog.senders.collectAsState()
-    val onboardingDismissed by app.autoLog.onboardingDismissed.collectAsState()
+    val wallets by app.repo.allWallets.collectAsState()
     val sync by app.sync.status.collectAsState()
-    val budgets by app.repo.budgets.collectAsState()
-    val groupSnapshot by app.repo.groups.collectAsState()
-    val month = remember { YearMonth.now().toString() } // `2026-11`, the same shape as a stored date's first 7 characters
-    val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
-    val topCategories = remember(txns, month, identity.userId) { TopCategories.top(txns, month, identity.userId) }
-    // The three budgets closest to (or past) their limit this month; the same usage rules as the Budgets screen and the alerts.
-    val topBudgets = remember(budgets, txns, groupSnapshot, month, identity.userId) {
-        BudgetRules.top(BudgetRules.usageList(identity.userId, budgets, txns, groupSnapshot, month), HOME_BUDGETS)
-    }
-    val scanner = rememberReceiptScanner(app)
+    val today = remember { LocalDate.now() }
+    val month = remember { YearMonth.now().toString() }
+    val me = identity.userId
 
-    // Pull down to sync. The Sync now button below does the same, for anyone who doesn't find the gesture.
+    val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
+    val totalBalance = remember(wallets, txns) { Balances.forWallets(wallets, txns).values.sum() }
+    val recent = remember(txns, me) {
+        txns.filter { it.ownerId == me && !it.deleted && it.status != "inbox" && it.type != TxnType.TRANSFER }
+            .sortedWith(compareByDescending<Txn> { it.date }.thenByDescending { it.updatedAt })
+            .take(3)
+    }
+
+    var periodOrdinal by rememberSaveable { mutableStateOf(SpendPeriod.YEAR.ordinal) }
+    val period = SpendPeriod.entries[periodOrdinal]
+    val series = remember(txns, me, period, today) { ExpenditureSeries.build(txns, me, period, today) }
+    var picked by remember(period) { mutableStateOf<Int?>(null) }
+    val selected = picked?.takeIf { series.points.getOrNull(it)?.spent != null } ?: series.currentIndex
+
+    // Animation state. Everything starts finished unless this is the first Home of the app run.
+    val context = LocalContext.current
+    val reduce = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val animate = remember { !HomeIntro.played && !reduce }
+    val rise = remember { List(7) { Animatable(if (animate) 0f else 1f) } }
+    val count = remember { Animatable(if (animate) 0f else 1f) }
+    val draw = remember { Animatable(if (animate) 0f else 1f) }
+
+    LaunchedEffect(Unit) {
+        if (!animate) return@LaunchedEffect
+        HomeIntro.played = true
+        // header, balance card, chart, "Recent Transactions", then its three rows: the header leads by 0.2 s
+        val delays = listOf(0L, 290L, 380L, 470L, 530L, 590L, 650L)
+        kotlinx.coroutines.coroutineScope {
+            rise.forEachIndexed { i, a -> launch { kotlinx.coroutines.delay(delays[i]); a.animateTo(1f, tween(720, easing = EaseOutExpo)) } }
+            launch { kotlinx.coroutines.delay(300); count.animateTo(1f, tween(700, easing = EaseOutCubic)) }
+            launch { kotlinx.coroutines.delay(580); draw.animateTo(1f, tween(1250, easing = EaseOutCubic)) }
+        }
+    }
+    // Choosing another period draws its line again.
+    var lastPeriod by remember { mutableStateOf(period) }
+    LaunchedEffect(period) {
+        if (period != lastPeriod) {
+            lastPeriod = period
+            if (!reduce) {
+                draw.snapTo(0f)
+                draw.animateTo(1f, tween(1250, easing = EaseOutCubic))
+            }
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = sync.running,
         onRefresh = { app.sync.requestNow() },
@@ -99,324 +174,304 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .padding(bottom = LocalNavInset.current)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            val name = identity.displayName?.takeIf { it.isNotBlank() }
-            Text(
-                if (name != null) "Hi, $name" else "Hi",
-                style = MaterialTheme.typography.headlineMedium,
+            Header(identity.displayName, attention, onProfile, Modifier.rise(rise[0]))
+
+            BalanceCard(
+                monthName = YearMonth.now().month.getDisplayName(TextStyle.FULL, Locale.ENGLISH),
+                balance = (totalBalance * count.value.toDouble()).toLong(), // Double: a Float cannot hold centavos above 16.7 million exactly
+                income = totals.income,
+                expenses = totals.spent,
+                reduceMotion = reduce,
+                onDetails = onBalanceDetails,
+                modifier = Modifier.rise(rise[1]),
             )
-            Text(
-                Ledger.monthLabel(month),
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-            )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Spent this month", style = MaterialTheme.typography.labelLarge)
-                    Text(Money.format(totals.spent), style = MaterialTheme.typography.headlineMedium)
-                    Spacer(Modifier.height(16.dp))
-                    Text("Income this month", style = MaterialTheme.typography.labelLarge)
-                    Text(Money.format(totals.income), style = MaterialTheme.typography.headlineMedium)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            TopCategoriesCard(topCategories, totals.spent)
-
-            if (topBudgets.isNotEmpty()) {
-                Spacer(Modifier.height(16.dp))
-                BudgetsCard(topBudgets, groupSnapshot, identity.userId, onBudgets)
-            }
-
-            if (inbox.isNotEmpty()) {
-                Spacer(Modifier.height(16.dp))
-                InboxCard(inbox.size, onInbox)
-            }
-
-            Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = onAdd,
-                modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
+            Column(
+                modifier = Modifier
+                    .rise(rise[2])
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(24.dp))
+                    .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text("+ Add")
-            }
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = scanner.open,
-                enabled = !scanner.busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
-            ) {
-                Text(if (scanner.busy) "Saving the photo..." else "Scan receipt")
-            }
-            scanner.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
-            ErrorText(scanner.error, Modifier.padding(top = 8.dp))
-
-            if (enabledApps.isEmpty() && senders.isEmpty() && !onboardingDismissed) {
-                Spacer(Modifier.height(24.dp))
-                AutoLogCard(onSetUp = onAutoLog, onNotNow = { app.autoLog.dismissOnboarding() })
-            }
-
-            Spacer(Modifier.height(24.dp))
-            SyncCard(sync, onSyncNow = { app.sync.requestNow() })
-        }
-    }
-}
-
-/**
- * Where this month's money went (RFC-008): the biggest spending categories as plain bars. Every bar
- * has its name and amount written beside it, so the length is never the only way to read it
- * (RULES 21), and each row is read out as one sentence by a screen reader.
- */
-@Composable
-private fun TopCategoriesCard(entries: List<CategorySpend>, totalSpent: Long) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Top categories this month", style = MaterialTheme.typography.labelLarge)
-            if (entries.isEmpty()) {
-                Text(
-                    "No spending logged this month yet.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            val biggest = entries.firstOrNull()?.spent ?: 1L
-            for (entry in entries) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = TopCategories.describe(entry, totalSpent) },
-                ) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(entry.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                        Text(Money.format(entry.spent), style = MaterialTheme.typography.titleMedium)
-                    }
-                    // The track is the full width; the bar is this category's share of the biggest one.
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 6.dp)
-                            .fillMaxWidth()
-                            .height(12.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth((entry.spent.toFloat() / biggest).coerceIn(0.02f, 1f))
-                                .height(12.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.primary),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** How many budgets Home lists; the rest are one tap away under See all. */
-private const val HOME_BUDGETS = 3
-
-/**
- * "Budgets this month" (RFC-009): the budgets nearest their limit, each with its bar, the amounts and a
- * status in words (never colour alone, RULES 21). Each row is read out as one sentence by a screen
- * reader. Only drawn when there is at least one budget to show.
- */
-@Composable
-private fun BudgetsCard(usages: List<BudgetUsage>, snapshot: GroupSnapshot, me: String, onSeeAll: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Budgets this month", style = MaterialTheme.typography.labelLarge)
-            for (usage in usages) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = BudgetFormRules.rowDescription(usage, snapshot, me) },
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Expenditures", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "${BudgetText.title(usage, snapshot)} · ${BudgetText.scope(usage.budget, snapshot)}",
-                        style = MaterialTheme.typography.bodyLarge,
+                        buildAnnotatedString {
+                            append(series.caption + " · ")
+                            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
+                                append(Money.format(series.total))
+                            }
+                        },
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    BudgetProgress(usage, Modifier.padding(top = 6.dp))
+                }
+                PeriodTabs(period) { periodOrdinal = it.ordinal }
+                SpendChart(series, draw.value, selected, onSelect = { picked = it })
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.rise(rise[3]).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Recent Transactions", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box(
+                        Modifier
+                            .heightIn(min = MinTouchHeight - 8.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(role = Role.Button, onClick = onSeeAll)
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("See all", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                if (recent.isEmpty()) {
+                    Text(
+                        "Nothing logged yet. Tap + to scan a receipt or add a transaction.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.rise(rise[4]).padding(vertical = 12.dp),
+                    )
+                }
+                recent.forEachIndexed { i, txn ->
+                    RecentRow(txn, today, { onOpenTxn(txn.id) }, Modifier.rise(rise[4 + i]))
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            OutlinedButton(onClick = onSeeAll, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
-                Text("See all budgets")
-            }
         }
     }
 }
 
-/** The Inbox badge (RFC-005): how many auto-logged payments wait for a check. The count is written out, not just a dot. */
 @Composable
-private fun InboxCard(count: Int, onOpen: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Inbox", style = MaterialTheme.typography.labelLarge)
-            Text(InboxRules.badge(count), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 4.dp))
-            Text(
-                "Read from your notifications and SMS. They stay on this phone until you confirm them.",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
-                Text("Open Inbox")
+private fun Header(name: String?, attention: Int, onProfile: () -> Unit, modifier: Modifier) {
+    val first = name?.takeIf { it.isNotBlank() }
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Welcome back,", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (first != null) Text(first, style = MaterialTheme.typography.titleLarge)
+        }
+        val label = if (attention > 0) "Profile and more, $attention ${if (attention == 1) "thing needs" else "things need"} your attention" else "Profile and more"
+        Row(
+            modifier = Modifier
+                .height(52.dp)
+                .clip(CircleShape)
+                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), CircleShape)
+                .clickable(role = Role.Button, onClick = onProfile)
+                .semantics { contentDescription = label }
+                .padding(start = 4.dp, end = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box {
+                Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.chimu.dawning), contentAlignment = Alignment.Center) {
+                    Text((first?.first()?.uppercase() ?: "C"), fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF455799))
+                }
+                if (attention > 0) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 5.dp, y = (-3).dp)
+                            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .border(BorderStroke(2.dp, MaterialTheme.colorScheme.surface), CircleShape)
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(attention.coerceAtMost(99).toString(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
             }
+            Icon(ChimuIcons.More, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
         }
     }
 }
 
-/** The onboarding card (RFC-005): says what auto-logging reads and that unconfirmed items stay on the phone. Shown until the user sets it up or says not now. */
 @Composable
-private fun AutoLogCard(onSetUp: () -> Unit, onNotNow: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Log payments automatically", style = MaterialTheme.typography.labelLarge)
-            Text(AUTO_LOG_HOME_TEXT, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onSetUp, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
-                Text("Set up")
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onNotNow, modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight)) {
-                Text("Not now")
-            }
-        }
-    }
-}
-
-/**
- * Where syncing stands: when it last worked, what is still waiting, and what went wrong. A problem
- * is written out in words ("Sync problem: ...") so it never depends on colour alone (RULES 21).
- */
-@Composable
-private fun SyncCard(status: SyncStatus, onSyncNow: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Sync", style = MaterialTheme.typography.labelLarge)
-            Text(
-                if (status.running) "Syncing..." else SyncText.lastSynced(status.lastSyncedAt, System.currentTimeMillis()),
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Text(SyncText.pending(status.pending), style = MaterialTheme.typography.bodyLarge)
-            ErrorText("Sync problem: ${status.error}".takeIf { status.error != null }, Modifier.padding(top = 8.dp))
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onSyncNow,
-                enabled = !status.running,
-                modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchHeight),
-            ) {
-                Text("Sync now")
-            }
-        }
-    }
-}
-
-/** What the Home screen needs from [rememberReceiptScanner]. */
-private class ReceiptScanner(
-    val open: () -> Unit,
-    val busy: Boolean,
-    /** Good news in words ("Saved. It will be read..."), or null. */
-    val message: String?,
-    /** What went wrong, in words, or null. */
-    val error: String?,
-)
-
-/**
- * "Scan receipt" (RFC-004): asks whether to take a photo or pick one, shrinks the picture, and logs a
- * `pending` entry that sync uploads and reads once the phone is online. No camera permission is
- * needed: the camera app takes the picture and hands it back through a FileProvider URI.
- */
-@Composable
-private fun rememberReceiptScanner(app: ChimuApp): ReceiptScanner {
-    val context = LocalContext.current
+private fun BalanceCard(
+    monthName: String,
+    balance: Long,
+    income: Long,
+    expenses: Long,
+    reduceMotion: Boolean,
+    onDetails: () -> Unit,
+    modifier: Modifier,
+) {
+    val ink = MaterialTheme.chimu.onHero
     val scope = rememberCoroutineScope()
-    var choosing by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    // Kept across rotation and process death: the camera app can outlive this screen.
-    var captureId by rememberSaveable { mutableStateOf<String?>(null) }
-
-    /** Shrinks [source] into the phone's own photo for [id], then logs the pending entry. */
-    fun keep(id: String, source: android.net.Uri) {
-        busy = true
-        message = null
-        error = null
-        scope.launch {
-            try {
-                val dest = ReceiptPhotos.photoFile(context, id)
-                withContext(Dispatchers.IO) { ReceiptPhotos.saveResized(context, source, dest) }
-                try {
-                    app.repo.createScan(id, dest.path)
-                } catch (e: Exception) {
-                    dest.delete() // no entry points at this file, so don't leave it behind
-                    throw e
-                }
-                message = "Receipt saved. It will be read as soon as the phone is online. Find it under Transactions."
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = "Couldn't save the receipt. ${e.message}"
-            } finally {
-                withContext(Dispatchers.IO) { captureId?.let { ReceiptPhotos.captureFile(context, it).delete() } }
-                captureId = null
-                busy = false
+    val shift = remember { Animatable(0f) }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(Brush.linearGradient(MaterialTheme.chimu.heroGradient))
+            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(monthName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+                Text("Total balance", fontSize = 16.sp, color = ink)
+                Text(Money.format(balance), fontSize = 36.sp, fontWeight = FontWeight.Bold, color = ink)
             }
-        }
-    }
-
-    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        val id = captureId
-        if (id == null) return@rememberLauncherForActivityResult
-        if (taken) {
-            keep(id, ReceiptPhotos.captureUri(context, id))
-        } else {
-            captureId = null // cancelled: nothing to keep
-        }
-    }
-    val pickPicture = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) keep(UUID.randomUUID().toString(), uri)
-    }
-
-    if (choosing) {
-        AlertDialog(
-            onDismissRequest = { choosing = false },
-            title = { Text("Scan a receipt") },
-            text = { Text("Take a photo of the receipt, or choose one you already have.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        choosing = false
-                        val id = UUID.randomUUID().toString()
-                        captureId = id
-                        try {
-                            takePicture.launch(ReceiptPhotos.captureUri(context, id))
-                        } catch (e: ActivityNotFoundException) {
-                            captureId = null
-                            error = "This phone has no camera app. Choose a photo from the gallery instead."
+            // The arrow slides out the way it points (up and right), then returns from the lower left.
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.onBackground)
+                    .clickable(role = Role.Button) {
+                        scope.launch {
+                            if (reduceMotion) {
+                                onDetails()
+                            } else {
+                                shift.animateTo(1f, tween(240, easing = FastOutLinearInEasing))
+                                onDetails()
+                                shift.snapTo(-1f)
+                                shift.animateTo(0f, tween(320, easing = EaseOutExpo))
+                            }
                         }
                     },
-                    modifier = Modifier.heightIn(min = MinTouchHeight),
-                ) { Text("Take photo") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        choosing = false
-                        pickPicture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    },
-                    modifier = Modifier.heightIn(min = MinTouchHeight),
-                ) { Text("Choose from gallery") }
-            },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    ChimuIcons.ArrowUpRight,
+                    contentDescription = "View balance details",
+                    tint = MaterialTheme.colorScheme.background,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            translationX = shift.value * 16.dp.toPx()
+                            translationY = -shift.value * 16.dp.toPx()
+                            alpha = 1f - abs(shift.value) * 0.9f
+                        },
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassPanel("Income", income, ink, Modifier.weight(1f))
+            GlassPanel("Expenses", expenses, ink, Modifier.weight(1f))
+        }
+    }
+}
+
+/** A frosted-looking panel: translucent white with a light edge (Compose has no blur of what is behind a view). */
+@Composable
+private fun GlassPanel(label: String, amount: Long, ink: Color, modifier: Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.5f))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.65f)), RoundedCornerShape(18.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+        Text(Money.format(amount), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
+    }
+}
+
+/** Week, Month, 6 Months, Year: a track with a white pill that slides to the chosen one. */
+@Composable
+private fun PeriodTabs(selected: SpendPeriod, onSelect: (SpendPeriod) -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+            .padding(4.dp),
+    ) {
+        val slot = maxWidth / SpendPeriod.entries.size
+        val x by animateDpAsState(slot * selected.ordinal, tween(360, easing = EaseOutExpo), label = "pill")
+        Box(
+            Modifier
+                .offset(x = x)
+                .width(slot)
+                .height(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(BorderStroke(1.5.dp, primary), RoundedCornerShape(10.dp)),
+        )
+        Row {
+            SpendPeriod.entries.forEach { p ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .selectable(selected = p == selected, role = Role.Tab, onClick = { onSelect(p) }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        p.label,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        fontWeight = if (p == selected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (p == selected) primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One transaction: a chevron in a tinted circle (up for money in, down for money out), the name, category and date,
+ * and the signed amount. Money out is a little greyer than money in; the sign and chevron say it too, so colour
+ * is never the only cue (RULES 21).
+ */
+@Composable
+private fun RecentRow(txn: Txn, today: LocalDate, onClick: () -> Unit, modifier: Modifier) {
+    val gain = txn.type == TxnType.INCOME
+    val colors = MaterialTheme.chimu
+    val category = Categories.all.firstOrNull { it.slug == txn.category }?.label ?: txn.type.label
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            Modifier.size(44.dp).clip(CircleShape).background(if (gain) colors.gainContainer else colors.lossContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (gain) ChimuIcons.ChevronUp else ChimuIcons.ChevronDown,
+                contentDescription = null,
+                tint = if (gain) colors.gain else colors.loss,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(txn.merchant?.takeIf { it.isNotBlank() } ?: category, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text("$category · ${shortDate(txn.date, today)}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        Text(
+            Money.formatSigned(txn.type, txn.amount),
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (gain) MaterialTheme.colorScheme.onSurface else colors.loss,
         )
     }
+}
 
-    return ReceiptScanner(open = { choosing = true }, busy = busy, message = message, error = error)
+/** `Today`, `Yesterday`, otherwise `24 Nov`. An unreadable date is shown as stored. */
+private fun shortDate(date: String, today: LocalDate): String {
+    val d = runCatching { LocalDate.parse(date) }.getOrNull() ?: return date
+    return when (d) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> d.format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH))
+    }
 }

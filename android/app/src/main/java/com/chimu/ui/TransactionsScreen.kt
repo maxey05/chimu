@@ -70,7 +70,7 @@ fun TransactionsScreen(app: ChimuApp, onAdd: () -> Unit, onOpen: (String) -> Uni
     val categoryChoices = remember { listOf(Choice(null, "All")) + Categories.all.map { Choice(it.slug, it.label) } }
     val typeChoices = remember { listOf(Choice(null, "All")) + TxnType.entries.map { Choice(it.slug, it.label) } }
 
-    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+    LazyColumn(modifier = Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LocalNavInset.current)) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp),

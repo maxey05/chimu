@@ -139,3 +139,11 @@ fun FilterMenu(
 
 /** Vertical spacing used between form fields. */
 val FieldSpacing = Arrangement.spacedBy(16.dp)
+
+/**
+ * How much room the floating nav bar takes at the bottom of a tab screen (bar 68 dp + 24 dp gap + the raised
+ * + button). Tab screens add it as bottom padding inside their scrolling content, so the last row can scroll
+ * clear of the bar. Zero everywhere else.
+ */
+val NavInset = 120.dp
+val LocalNavInset = androidx.compose.runtime.compositionLocalOf { 0.dp }

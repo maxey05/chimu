@@ -111,7 +111,7 @@ private fun Heading(freshness: String) {
 
 @Composable
 private fun NoGroup(freshness: String, onCreate: () -> Unit, onJoin: () -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LocalNavInset.current)) {
         Heading(freshness)
         Column(Modifier.padding(horizontal = 20.dp)) {
             Text(
@@ -180,7 +180,7 @@ private fun GroupContent(
         }
     }
 
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LocalNavInset.current)) {
         item { Heading(freshness) }
 
         if (snap.groups.size > 1) {

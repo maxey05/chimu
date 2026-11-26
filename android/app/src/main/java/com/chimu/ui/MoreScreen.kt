@@ -1,6 +1,7 @@
 package com.chimu.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,7 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.chimu.BudgetRules
 import com.chimu.ChimuApp
+import com.chimu.TopCategories
+import java.time.YearMonth
 import com.chimu.Identity
 import com.chimu.Supa
 import io.github.jan.supabase.auth.auth
@@ -46,6 +50,20 @@ fun MoreScreen(
     onAutoLog: () -> Unit,
 ) {
     val inbox by app.repo.inbox.collectAsState()
+    // What used to sit on Home: this month's categories and budgets, the Inbox count, sync and auto-log setup.
+    val txns by app.repo.txns.collectAsState()
+    val budgets by app.repo.budgets.collectAsState()
+    val groupSnapshot by app.repo.groups.collectAsState()
+    val sync by app.sync.status.collectAsState()
+    val enabledApps by app.autoLog.enabledPackages.collectAsState()
+    val senders by app.autoLog.senders.collectAsState()
+    val onboardingDismissed by app.autoLog.onboardingDismissed.collectAsState()
+    val month = remember { YearMonth.now().toString() }
+    val totals = remember(txns, month) { com.chimu.Ledger.monthTotals(txns, month) }
+    val topCategories = remember(txns, month, identity.userId) { TopCategories.top(txns, month, identity.userId) }
+    val topBudgets = remember(budgets, txns, groupSnapshot, month, identity.userId) {
+        BudgetRules.top(BudgetRules.usageList(identity.userId, budgets, txns, groupSnapshot, month), HOME_BUDGETS)
+    }
     var confirmSignOut by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -53,13 +71,23 @@ fun MoreScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = LocalNavInset.current),
     ) {
         Text(
             "More",
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp),
         )
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            SyncCard(sync, onSyncNow = { app.sync.requestNow() })
+            if (inbox.isNotEmpty()) InboxCard(inbox.size, onInbox)
+            TopCategoriesCard(topCategories, totals.spent)
+            if (topBudgets.isNotEmpty()) BudgetsCard(topBudgets, groupSnapshot, identity.userId, onBudgets)
+            if (enabledApps.isEmpty() && senders.isEmpty() && !onboardingDismissed) {
+                AutoLogCard(onSetUp = onAutoLog, onNotNow = { app.autoLog.dismissOnboarding() })
+            }
+        }
         HorizontalDivider()
         MoreRow("Wallets", onWallets)
         HorizontalDivider()

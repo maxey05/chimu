@@ -1,22 +1,22 @@
 package com.chimu.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -54,15 +54,6 @@ private const val RECURRING_FORM = "recurring_item"
 private const val GOALS = "goals"
 private const val GOAL_FORM = "goal"
 private const val GOAL_ADD = "goal_add"
-
-private class Tab(val route: String, val label: String, val icon: ImageVector)
-
-private val tabs = listOf(
-    Tab(HOME, "Home", Icons.Filled.Home),
-    Tab(TRANSACTIONS, "Transactions", Icons.AutoMirrored.Filled.List),
-    Tab(GROUP, "Group", Icons.Filled.AccountCircle),
-    Tab(MORE, "More", Icons.Filled.Menu),
-)
 
 /**
  * Decides what the person sees: setup help, the sign-in screen, or the app.
@@ -109,33 +100,43 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
 
     val nav = rememberNavController()
     val route = nav.currentBackStackEntryAsState().value?.destination?.route
-    val onTab = tabs.any { it.route == route }
+    val selectedTab = when (route) {
+        HOME -> NavTab.HOME
+        TRANSACTIONS -> NavTab.TRANSACTIONS
+        GROUP -> NavTab.GROUP
+        MORE -> NavTab.MORE
+        else -> null
+    }
+    val onTab = selectedTab != null
+
+    // The + button's two jobs. The scanner lives here (not on Home) so it works from every tab.
+    val scanner = rememberReceiptScanner(app)
+    var showAdd by remember { mutableStateOf(false) }
+    val snackbars = remember { SnackbarHostState() }
+    LaunchedEffect(scanner.busy) { if (scanner.busy) snackbars.showSnackbar("Saving the photo...") }
+    LaunchedEffect(scanner.message) { scanner.message?.let { snackbars.showSnackbar(it) } }
+    LaunchedEffect(scanner.error) { scanner.error?.let { snackbars.showSnackbar(it) } }
+
+    // Things waiting for the person: Inbox items, and a failed sync (RULES 20: errors stay visible).
+    val inbox by app.repo.inbox.collectAsState()
+    val sync by app.sync.status.collectAsState()
+    val attention = inbox.size + if (sync.error != null) 1 else 0
 
     Scaffold(
-        bottomBar = {
-            if (onTab) {
-                NavigationBar {
-                    tabs.forEach { tab ->
-                        NavigationBarItem(
-                            selected = route == tab.route,
-                            onClick = { nav.goToTab(tab.route) },
-                            icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label) },
-                        )
-                    }
-                }
-            }
-        },
+        snackbarHost = { SnackbarHost(snackbars, modifier = Modifier.padding(bottom = if (onTab) NavInset - 24.dp else 0.dp)) },
     ) { padding ->
-        NavHost(nav, startDestination = HOME, modifier = Modifier.padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding)) {
+        CompositionLocalProvider(LocalNavInset provides (if (onTab) NavInset else 0.dp)) {
+        NavHost(nav, startDestination = HOME) {
             composable(HOME) {
                 HomeScreen(
                     app,
                     identity,
-                    onAdd = { nav.navigate("$TXN_FORM/$NEW_ID") },
-                    onInbox = { nav.navigate(INBOX) },
-                    onAutoLog = { nav.navigate(AUTO_LOG) },
-                    onBudgets = { nav.navigate(BUDGETS) },
+                    attention = attention,
+                    onProfile = { nav.goToTab(MORE) },
+                    onBalanceDetails = { nav.navigate(WALLETS) },
+                    onSeeAll = { nav.goToTab(TRANSACTIONS) },
+                    onOpenTxn = { id -> nav.navigate("$TXN_FORM/$id") },
                 )
             }
             composable(TRANSACTIONS) {
@@ -252,6 +253,33 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
             ) { entry ->
                 AddToGoalScreen(app, entry.arguments?.getString("id") ?: "", onClose = { nav.popBackStack() })
             }
+        }
+        }
+        if (onTab) {
+            FloatingNav(
+                selected = selectedTab,
+                attention = attention,
+                onSelect = { tab ->
+                    nav.goToTab(
+                        when (tab) {
+                            NavTab.HOME -> HOME
+                            NavTab.TRANSACTIONS -> TRANSACTIONS
+                            NavTab.GROUP -> GROUP
+                            NavTab.MORE -> MORE
+                        },
+                    )
+                },
+                onAdd = { showAdd = true },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+        if (showAdd) {
+            AddSheet(
+                onDismiss = { showAdd = false },
+                onScan = { showAdd = false; scanner.open() },
+                onAddTransaction = { showAdd = false; nav.navigate("$TXN_FORM/$NEW_ID") },
+            )
+        }
         }
     }
 }
