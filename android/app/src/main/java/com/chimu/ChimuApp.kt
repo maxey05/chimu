@@ -9,6 +9,10 @@ import kotlinx.coroutines.SupervisorJob
 
 /** Holds the app-wide objects so they survive screen rotation and are created once. */
 class ChimuApp : Application() {
+    /** The phone's database. Screens go through [repo]; only the temporary [SampleData] loader needs this. */
+    lateinit var db: Db
+        private set
+
     lateinit var repo: Repo
         private set
 
@@ -38,7 +42,7 @@ class ChimuApp : Application() {
     override fun onCreate() {
         super.onCreate()
         val prefs = getSharedPreferences("chimu", MODE_PRIVATE)
-        val db = Db(this)
+        db = Db(this)
         account = Account(prefs)
         // The manager reloads the screens' data through `repo` after a sync; the repo asks the
         // manager to sync after a save. `repo` is only read when a sync finishes, never during setup.
