@@ -17,6 +17,9 @@ data class TxnFilter(
 
 data class MonthTotals(val spent: Long, val income: Long)
 
+/** The three filters that open a menu on the Transactions screen. */
+enum class FilterPart { MONTH, TYPE, CATEGORY }
+
 /** List and summary logic for the Home and Transactions screens, kept free of Android types. */
 object Ledger {
     /** `2026-11-23` -> `2026-11`. */
@@ -70,4 +73,27 @@ object Ledger {
     /** Distinct `YYYY-MM` months that have at least one non-deleted row, newest first. */
     fun months(txns: List<Txn>): List<String> =
         txns.filter { !it.deleted }.map { monthOf(it.date) }.distinct().sortedDescending()
+
+    /**
+     * How many rows each choice of one filter would show right now, keeping the other filters (and the search) as they
+     * are. The `null` key is "All". Choices with no rows are simply missing from the map.
+     */
+    fun optionCounts(txns: List<Txn>, current: TxnFilter, part: FilterPart): Map<String?, Int> {
+        val base = when (part) {
+            FilterPart.MONTH -> filter(txns, current.copy(month = null))
+            FilterPart.TYPE -> filter(txns, current.copy(type = null))
+            FilterPart.CATEGORY -> filter(txns, current.copy(category = null))
+        }
+        val counts = HashMap<String?, Int>()
+        counts[null] = base.size
+        for (t in base) {
+            val key = when (part) {
+                FilterPart.MONTH -> monthOf(t.date)
+                FilterPart.TYPE -> t.type.slug
+                FilterPart.CATEGORY -> t.category
+            } ?: continue
+            counts[key] = (counts[key] ?: 0) + 1
+        }
+        return counts
+    }
 }
