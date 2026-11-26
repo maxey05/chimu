@@ -39,8 +39,12 @@ data class ChimuColors(
     val dawning: Color,
     val outlineStrong: Color,
     val warning: Color,
-    /** The one coloured block per screen: the Home balance card. */
+    /** The Home balance card, the one solid gradient block on a screen. */
     val heroGradient: List<Color>,
+    /** The soft wash behind the top of Home and Transactions: four colours from top to the page colour, at 0, 38, 68 and 100 %. */
+    val topWash: List<Color>,
+    /** The quiet fill behind a transaction's details panel and its transfer icon. */
+    val detailWash: Color,
     /** The Home total and its panels stay dark-on-light in both modes. */
     val onHero: Color,
 )
@@ -55,6 +59,8 @@ val LightChimuColors = ChimuColors(
     outlineStrong = OutlineStrong,
     warning = WarningLight,
     heroGradient = listOf(Lavender, LoveRose, LoveApricot),
+    topWash = listOf(Color(0xFFD8CAE4), Color(0xFFE9E0F0), Color(0xFFF6F2F9), Color(0xFFFFFFFF)),
+    detailWash = Color(0xFFF7F5FA),
     onHero = IndigoInk,
 )
 
@@ -68,6 +74,8 @@ val DarkChimuColors = ChimuColors(
     outlineStrong = Color(0xFF8A8FA8),
     warning = Color(0xFFFFC27A),
     heroGradient = listOf(Lavender, LoveRose, LoveApricot),
+    topWash = listOf(Color(0xFF2B3560), Color(0xFF222B4F), Color(0xFF181F3B), DarkPage),
+    detailWash = Color(0xFF1F2744),
     onHero = IndigoInk,
 )
 
