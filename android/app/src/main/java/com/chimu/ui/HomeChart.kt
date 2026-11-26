@@ -1,6 +1,8 @@
 package com.chimu.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateOffsetAsState
@@ -24,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,7 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -59,6 +64,7 @@ import com.chimu.SpendPeriod
 import com.chimu.SpendSeries
 import com.chimu.ui.theme.chimu
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val EaseOutExpo = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
@@ -106,8 +112,10 @@ private fun chartSummary(series: SpendSeries): String =
         series.points.joinToString(", ") { it.longLabel + " " + (it.spent?.let(Money::format) ?: "no data yet") }
 
 /**
- * The Home Expenditures chart: a periwinkle line over a lavender fade. [progress] (0 to 1) is how much of the line
- * is drawn; the dot leads the line while it draws, then rests on the [selected] point. Tap or drag to pick a point.
+ * The Home Expenditures chart, as a line or as bars ([showBars]). The line is periwinkle over a lavender fade:
+ * [progress] (0 to 1) is how much of it is drawn; the dot leads the line while it draws, then rests on the
+ * [selected] point. The bars grow up one after another from the baseline; the selected bar is periwinkle and the
+ * others lavender. Either way: tap or drag to pick a point.
  */
 @Composable
 fun SpendChart(
@@ -116,6 +124,7 @@ fun SpendChart(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    showBars: Boolean = false,
 ) {
     val density = LocalDensity.current
     val colors = MaterialTheme.chimu
@@ -126,7 +135,24 @@ fun SpendChart(
     val vertical = series.period == SpendPeriod.YEAR
     val labelBand by animateDpAsState(if (vertical) 46.dp else 24.dp, tween(320, easing = EaseOutExpo), label = "labelBand")
     val ready = progress >= 0.999f
-    val tipAlpha by animateFloatAsState(if (ready) 1f else 0f, tween(280), label = "tip")
+    // Bars: each one starts 45 ms after the one before and grows for 360 ms.
+    val reduce = rememberReduceMotion()
+    val barT = remember { Animatable(0f) }
+    val barStep = 45
+    val barGrow = 360
+    val barTotal = barGrow + barStep * (n - 1)
+    LaunchedEffect(showBars, series.period) {
+        if (showBars) {
+            if (reduce) {
+                barT.snapTo(1f)
+            } else {
+                barT.snapTo(0f)
+                barT.animateTo(1f, tween(barTotal, easing = LinearEasing))
+            }
+        }
+    }
+    val interactive = if (showBars) barT.value >= 0.999f else ready
+    val tipAlpha by animateFloatAsState(if (interactive) 1f else 0f, tween(280), label = "tip")
     var tipSize by remember { mutableStateOf(IntSize.Zero) }
 
     Column(modifier) {
@@ -153,9 +179,17 @@ fun SpendChart(
             val resting by animateOffsetAsState(target, tween(320, easing = EaseOutExpo), label = "dot")
             val dot = if (ready) resting else tip
 
+            // Bars start at zero, so a bar's height is its share of the tallest one.
+            val slotPx = widthPx / n
+            val baseY = heightPx - with(density) { CHART_BOTTOM.toPx() }
+            val barArea = baseY - with(density) { CHART_TOP.toPx() }
+            val maxSpent = series.points.maxOfOrNull { it.spent ?: 0L }?.takeIf { it > 0L } ?: 1L
+            fun barHeight(i: Int): Float = ((series.points[i].spent ?: 0L).toFloat() / maxSpent) * barArea
+            val anchor = if (showBars) Offset((selected + 0.5f) * slotPx, baseY - barHeight(selected.coerceIn(0, n - 1))) else dot
+
             // Tap or drag anywhere on the chart to pick the nearest point that has data.
             fun pick(x: Float) {
-                if (!ready) return
+                if (!interactive) return
                 val i = (x / (widthPx / n)).toInt().coerceIn(0, n - 1)
                 if (series.points[i].spent != null) onSelect(i)
             }
@@ -164,10 +198,25 @@ fun SpendChart(
                 Modifier
                     .fillMaxWidth()
                     .height(CHART_HEIGHT)
-                    .pointerInput(series, ready) { detectTapGestures { pick(it.x) } }
-                    .pointerInput(series, ready) { detectHorizontalDragGestures { change, _ -> pick(change.position.x) } },
+                    .pointerInput(series, interactive) { detectTapGestures { pick(it.x) } }
+                    .pointerInput(series, interactive) { detectHorizontalDragGestures { change, _ -> pick(change.position.x) } },
             ) {
-                if (known.isNotEmpty()) {
+                if (showBars) {
+                    val barW = min(slotPx * 0.5f, 28.dp.toPx())
+                    val corner = 6.dp.toPx()
+                    series.points.forEachIndexed { i, p ->
+                        if (p.spent == null) return@forEachIndexed
+                        val t = ((barT.value * barTotal - i * barStep) / barGrow).coerceIn(0f, 1f)
+                        val h = barHeight(i) * EaseOutExpo.transform(t)
+                        if (h < 1f) return@forEachIndexed
+                        val cx = (i + 0.5f) * slotPx
+                        val r = CornerRadius(min(corner, h))
+                        val bar = Path().apply {
+                            addRoundRect(RoundRect(cx - barW / 2, baseY - h, cx + barW / 2, baseY, r, r, CornerRadius.Zero, CornerRadius.Zero))
+                        }
+                        drawPath(bar, if (i == selected) primary else colors.accent.copy(alpha = 0.45f))
+                    }
+                } else if (known.isNotEmpty()) {
                     if (length > 0f) {
                         val drawn = Path()
                         measure.getSegment(0f, length * progress.coerceIn(0f, 1f), drawn, true)
@@ -206,8 +255,8 @@ fun SpendChart(
             // Tooltip above the dot, kept inside the chart's width.
             val point = series.points.getOrNull(selected)
             if (point?.spent != null) {
-                val tipX = (dot.x - tipSize.width / 2f).coerceIn(0f, max(0f, widthPx - tipSize.width))
-                val tipY = max(0f, dot.y - tipSize.height - with(density) { 10.dp.toPx() })
+                val tipX = (anchor.x - tipSize.width / 2f).coerceIn(0f, max(0f, widthPx - tipSize.width))
+                val tipY = max(0f, anchor.y - tipSize.height - with(density) { 10.dp.toPx() })
                 Column(
                     modifier = Modifier
                         .offset { IntOffset(tipX.roundToInt(), tipY.roundToInt()) }

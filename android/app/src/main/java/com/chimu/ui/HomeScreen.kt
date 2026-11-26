@@ -5,7 +5,12 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -31,7 +36,10 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -59,6 +68,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chimu.Balances
@@ -69,13 +79,14 @@ import com.chimu.Identity
 import com.chimu.Ledger
 import com.chimu.Money
 import com.chimu.SpendPeriod
+import com.chimu.SyncStatus
+import com.chimu.SyncText
 import com.chimu.Txn
 import com.chimu.TxnType
 import com.chimu.ui.theme.ChimuIcons
 import com.chimu.ui.theme.chimu
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
@@ -96,8 +107,9 @@ private fun Modifier.rise(a: Animatable<Float, AnimationVector1D>): Modifier = g
 }
 
 /**
- * Home (Dusk design): welcome header with the profile pill, the balance card, the Expenditures chart and the
- * latest three transactions. Budgets, Inbox, sync and auto-log setup live under More.
+ * Home (Dusk design): welcome header with the account menu, the balance card, the Expenditures chart (line or bars)
+ * and the latest three transactions, which open a small panel of details when tapped. Budgets live on Plan, the
+ * month's categories on Dashboard, and Inbox, sync and auto-log setup on Profile.
  *
  * Startup: the header appears first, the other panels follow 0.2 s later one after another, the total counts up
  * and the chart line is drawn by a dot travelling along it. Android's "remove animations" setting turns all of it off.
@@ -108,12 +120,14 @@ fun HomeScreen(
     app: ChimuApp,
     identity: Identity,
     attention: Int,
-    onProfile: () -> Unit,
     onBalanceDetails: () -> Unit,
+    onInbox: () -> Unit,
+    onAutoLog: () -> Unit,
     onSeeAll: () -> Unit,
     onOpenTxn: (String) -> Unit,
 ) {
     val txns by app.repo.txns.collectAsState()
+    val inbox by app.repo.inbox.collectAsState()
     val wallets by app.repo.allWallets.collectAsState()
     val sync by app.sync.status.collectAsState()
     val today = remember { LocalDate.now() }
@@ -133,6 +147,9 @@ fun HomeScreen(
     val series = remember(txns, me, period, today) { ExpenditureSeries.build(txns, me, period, today) }
     var picked by remember(period) { mutableStateOf<Int?>(null) }
     val selected = picked?.takeIf { series.points.getOrNull(it)?.spent != null } ?: series.currentIndex
+    var showBars by rememberSaveable { mutableStateOf(false) }
+    var openId by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmSignOut by remember { mutableStateOf(false) }
 
     // Animation state. Everything starts finished unless this is the first Home of the app run.
     val context = LocalContext.current
@@ -153,144 +170,297 @@ fun HomeScreen(
             launch { kotlinx.coroutines.delay(580); draw.animateTo(1f, tween(1250, easing = EaseOutCubic)) }
         }
     }
-    // Choosing another period draws its line again.
-    var lastPeriod by remember { mutableStateOf(period) }
-    LaunchedEffect(period) {
-        if (period != lastPeriod) {
-            lastPeriod = period
-            if (!reduce) {
+    // Choosing another period, or switching back to the line, draws the line again. (Bars grow inside SpendChart.)
+    var lastKey by remember { mutableStateOf(period to showBars) }
+    LaunchedEffect(period, showBars) {
+        val key = period to showBars
+        if (key != lastKey) {
+            lastKey = key
+            if (!reduce && !showBars) {
                 draw.snapTo(0f)
                 draw.animateTo(1f, tween(1250, easing = EaseOutCubic))
             }
         }
     }
 
-    PullToRefreshBox(
-        isRefreshing = sync.running,
-        onRefresh = { app.sync.requestNow() },
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = LocalNavInset.current)
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(28.dp),
+    Box(Modifier.fillMaxSize()) {
+    TopWash(Modifier.align(Alignment.TopStart))
+        PullToRefreshBox(
+            isRefreshing = sync.running,
+            onRefresh = { app.sync.requestNow() },
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Header(identity.displayName, attention, onProfile, Modifier.rise(rise[0]))
-
-            BalanceCard(
-                monthName = YearMonth.now().month.getDisplayName(TextStyle.FULL, Locale.ENGLISH),
-                balance = (totalBalance * count.value.toDouble()).toLong(), // Double: a Float cannot hold centavos above 16.7 million exactly
-                income = totals.income,
-                expenses = totals.spent,
-                reduceMotion = reduce,
-                onDetails = onBalanceDetails,
-                modifier = Modifier.rise(rise[1]),
-            )
-
             Column(
                 modifier = Modifier
-                    .rise(rise[2])
-                    .fillMaxWidth()
-                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(24.dp))
-                    .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = LocalNavInset.current)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Expenditures", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        buildAnnotatedString {
-                            append(series.caption + " · ")
-                            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
-                                append(Money.format(series.total))
-                            }
-                        },
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                PeriodTabs(period) { periodOrdinal = it.ordinal }
-                SpendChart(series, draw.value, selected, onSelect = { picked = it })
-            }
+                Header(
+                    name = identity.displayName,
+                    email = identity.email,
+                    attention = attention,
+                    inboxCount = inbox.size,
+                    sync = sync,
+                    onInbox = onInbox,
+                    onWallets = onBalanceDetails,
+                    onAutoLog = onAutoLog,
+                    onSyncNow = { app.sync.requestNow() },
+                    onSignOut = { confirmSignOut = true },
+                    modifier = Modifier.rise(rise[0]),
+                )
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    modifier = Modifier.rise(rise[3]).fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                BalanceCard(
+                    monthName = YearMonth.now().let { it.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + it.year },
+                    balance = (totalBalance * count.value.toDouble()).toLong(), // Double: a Float cannot hold centavos above 16.7 million exactly
+                    income = totals.income,
+                    expenses = totals.spent,
+                    reduceMotion = reduce,
+                    onDetails = onBalanceDetails,
+                    modifier = Modifier.rise(rise[1]),
+                )
+
+                Column(
+                    modifier = Modifier
+                        .rise(rise[2])
+                        .fillMaxWidth()
+                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(24.dp))
+                        .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text("Recent Transactions", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Box(
-                        Modifier
-                            .heightIn(min = MinTouchHeight - 8.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(role = Role.Button, onClick = onSeeAll)
-                            .padding(horizontal = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("See all", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Expenditures", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            buildAnnotatedString {
+                                append(series.caption + " · ")
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
+                                    append(Money.format(series.total))
+                                }
+                            },
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
+                    ChartToggle(showBars) { showBars = it }
+                    }
+                    PeriodTabs(period) { periodOrdinal = it.ordinal }
+                    SpendChart(series, draw.value, selected, onSelect = { picked = it }, showBars = showBars)
                 }
-                if (recent.isEmpty()) {
-                    Text(
-                        "Nothing logged yet. Tap + to scan a receipt or add a transaction.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.rise(rise[4]).padding(vertical = 12.dp),
-                    )
-                }
-                recent.forEachIndexed { i, txn ->
-                    RecentRow(txn, today, { onOpenTxn(txn.id) }, Modifier.rise(rise[4 + i]))
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.rise(rise[3]).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Recent Transactions", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(
+                            Modifier
+                                .heightIn(min = MinTouchHeight - 8.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(role = Role.Button, onClick = onSeeAll)
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("See all", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    if (recent.isEmpty()) {
+                        Text(
+                            "No transactions yet!",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.rise(rise[4]).padding(vertical = 12.dp),
+                        )
+                    }
+                    recent.forEachIndexed { i, txn ->
+                        val category = Categories.all.firstOrNull { it.slug == txn.category }?.label ?: txn.type.label
+                        ExpandableTxnRow(
+                            app = app,
+                            txn = txn,
+                            subtitle = "$category · ${shortDate(txn.date, today)}",
+                            expanded = openId == txn.id,
+                            onToggle = { openId = if (openId == txn.id) null else txn.id },
+                            onOpen = { onOpenTxn(txn.id) },
+                            modifier = Modifier.rise(rise[4 + i]),
+                        )
+                    }
                 }
             }
         }
     }
+    if (confirmSignOut) SignOutDialog(app, onDismiss = { confirmSignOut = false })
 }
 
+/**
+ * "Welcome back," and the name, with the account pill on the right. The pill (avatar, a count of things waiting,
+ * and a chevron) opens a small menu: who is signed in, Inbox with its number, Wallets, when it last synced
+ * (tap to sync now), auto-log setup and Sign out.
+ */
 @Composable
-private fun Header(name: String?, attention: Int, onProfile: () -> Unit, modifier: Modifier) {
+private fun Header(
+    name: String?,
+    email: String?,
+    attention: Int,
+    inboxCount: Int,
+    sync: SyncStatus,
+    onInbox: () -> Unit,
+    onWallets: () -> Unit,
+    onAutoLog: () -> Unit,
+    onSyncNow: () -> Unit,
+    onSignOut: () -> Unit,
+    modifier: Modifier,
+) {
     val first = name?.takeIf { it.isNotBlank() }
+    var open by remember { mutableStateOf(false) }
+    val turn by animateFloatAsState(if (open) 180f else 0f, tween(260, easing = EaseOutExpo), label = "pillChevron")
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("Welcome back,", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (first != null) Text(first, style = MaterialTheme.typography.titleLarge)
         }
-        val label = if (attention > 0) "Profile and more, $attention ${if (attention == 1) "thing needs" else "things need"} your attention" else "Profile and more"
-        Row(
-            modifier = Modifier
-                .height(52.dp)
-                .clip(CircleShape)
-                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), CircleShape)
-                .clickable(role = Role.Button, onClick = onProfile)
-                .semantics { contentDescription = label }
-                .padding(start = 4.dp, end = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box {
-                Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.chimu.dawning), contentAlignment = Alignment.Center) {
-                    Text((first?.first()?.uppercase() ?: "C"), fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF455799))
+        val label = if (attention > 0) "Account menu, $attention ${if (attention == 1) "thing needs" else "things need"} your attention" else "Account menu"
+        Box {
+            Row(
+                modifier = Modifier
+                    .height(52.dp)
+                    .clip(CircleShape)
+                    .border(BorderStroke(1.dp, if (open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant), CircleShape)
+                    .clickable(role = Role.Button) { open = !open }
+                    .semantics { contentDescription = label }
+                    .padding(start = 4.dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box {
+                    ProfileAvatar(first, 42.dp)
+                    if (attention > 0) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 5.dp, y = (-3).dp)
+                                .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .border(BorderStroke(2.dp, MaterialTheme.colorScheme.surface), CircleShape)
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(attention.coerceAtMost(99).toString(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
                 }
-                if (attention > 0) {
+                Icon(ChimuIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp).rotate(turn))
+            }
+            DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                modifier = Modifier.width(292.dp),
+                offset = DpOffset(0.dp, 8.dp),
+                shape = RoundedCornerShape(22.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ProfileAvatar(first, 44.dp)
+                    Column(Modifier.weight(1f)) {
+                        if (first != null) Text(first, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        if (email != null) Text(email, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+                HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                MenuRow(ChimuIcons.Inbox, "Inbox", badge = inboxCount.takeIf { it > 0 }?.toString()) { open = false; onInbox() }
+                MenuRow(ChimuIcons.Wallet, "Wallets") { open = false; onWallets() }
+                // Tapping syncs now and keeps the menu open, so the spinning icon and the new time are seen.
+                MenuRow(
+                    ChimuIcons.Sync,
+                    "Last synced",
+                    detail = if (sync.running) "Syncing..." else SyncText.lastSynced(sync.lastSyncedAt, System.currentTimeMillis()).removePrefix("Synced "),
+                    spin = sync.running,
+                ) { if (!sync.running) onSyncNow() }
+                MenuRow(ChimuIcons.Camera, "Auto-log payments") { open = false; onAutoLog() }
+                HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                MenuRow(ChimuIcons.SignOut, "Sign out") { open = false; onSignOut() }
+            }
+        }
+    }
+}
+
+/** One line of the account menu: icon, label, then an optional number or short note on the right. */
+@Composable
+private fun MenuRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, badge: String? = null, detail: String? = null, spin: Boolean = false, onClick: () -> Unit) {
+    val angle by rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spinAngle")
+    DropdownMenuItem(
+        text = {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (detail != null) Text(detail, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (badge != null) {
                     Box(
                         Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = 5.dp, y = (-3).dp)
-                            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                            .height(26.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .border(BorderStroke(2.dp, MaterialTheme.colorScheme.surface), CircleShape)
-                            .padding(horizontal = 4.dp),
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .padding(horizontal = 10.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(attention.coerceAtMost(99).toString(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                        Text(badge, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
-            Icon(ChimuIcons.More, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+        },
+        leadingIcon = {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp).then(if (spin) Modifier.rotate(angle) else Modifier))
+        },
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = 48.dp),
+    )
+}
+
+/** Two small buttons that switch the Expenditures chart between a line and bars; a white pill slides under the chosen one. */
+@Composable
+private fun ChartToggle(showBars: Boolean, onChange: (Boolean) -> Unit) {
+    val x by animateDpAsState(if (showBars) 44.dp else 0.dp, tween(320, easing = EaseOutExpo), label = "chartToggle")
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.chimu.detailWash)
+            .padding(3.dp),
+    ) {
+        Box(
+            Modifier
+                .offset(x = x)
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary), RoundedCornerShape(10.dp)),
+        )
+        Row {
+            ToggleButton(ChimuIcons.LineChart, "Line chart", !showBars) { onChange(false) }
+            ToggleButton(ChimuIcons.BarChart, "Bar chart", showBars) { onChange(true) }
         }
+    }
+}
+
+@Composable
+private fun ToggleButton(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.size(44.dp).selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = name,
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.chimu.outlineStrong,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -419,59 +589,5 @@ private fun PeriodTabs(selected: SpendPeriod, onSelect: (SpendPeriod) -> Unit) {
                 }
             }
         }
-    }
-}
-
-/**
- * One transaction: a chevron in a tinted circle (up for money in, down for money out), the name, category and date,
- * and the signed amount. Money out is a little greyer than money in; the sign and chevron say it too, so colour
- * is never the only cue (RULES 21).
- */
-@Composable
-private fun RecentRow(txn: Txn, today: LocalDate, onClick: () -> Unit, modifier: Modifier) {
-    val gain = txn.type == TxnType.INCOME
-    val colors = MaterialTheme.chimu
-    val category = Categories.all.firstOrNull { it.slug == txn.category }?.label ?: txn.type.label
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(
-            Modifier.size(44.dp).clip(CircleShape).background(if (gain) colors.gainContainer else colors.lossContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (gain) ChimuIcons.ChevronUp else ChimuIcons.ChevronDown,
-                contentDescription = null,
-                tint = if (gain) colors.gain else colors.loss,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Column(Modifier.weight(1f)) {
-            Text(txn.merchant?.takeIf { it.isNotBlank() } ?: category, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text("$category · ${shortDate(txn.date, today)}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
-        Text(
-            Money.formatSigned(txn.type, txn.amount),
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (gain) MaterialTheme.colorScheme.onSurface else colors.loss,
-        )
-    }
-}
-
-/** `Today`, `Yesterday`, otherwise `24 Nov`. An unreadable date is shown as stored. */
-private fun shortDate(date: String, today: LocalDate): String {
-    val d = runCatching { LocalDate.parse(date) }.getOrNull() ?: return date
-    return when (d) {
-        today -> "Today"
-        today.minusDays(1) -> "Yesterday"
-        else -> d.format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH))
     }
 }
