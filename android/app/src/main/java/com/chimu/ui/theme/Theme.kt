@@ -1,58 +1,69 @@
 package com.chimu.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Lavender,
+    onPrimary = IndigoInk,
+    primaryContainer = Color(0xFF2A3358),
+    onPrimaryContainer = Dawning,
+    secondary = Lavender,
+    onSecondary = IndigoInk,
+    tertiary = LoveRose,
+    background = DarkPage,
+    onBackground = Dawning,
+    surface = DarkSurface,
+    onSurface = Dawning,
+    surfaceVariant = DarkSurface,
+    onSurfaceVariant = DarkInkSecondary,
+    outline = Color(0xFF8A8FA8),
+    outlineVariant = Color(0xFF2E3860),
+    error = DangerDark,
+    onError = IndigoInk,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+    primary = Periwinkle,
     onPrimary = Color.White,
+    primaryContainer = PrimaryWash,
+    onPrimaryContainer = Periwinkle,
+    secondary = Periwinkle,
     onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    tertiary = Lavender,
+    background = Color.White,
+    onBackground = IndigoInk,
+    surface = Color.White,
+    onSurface = IndigoInk,
+    surfaceVariant = Color.White,
+    onSurfaceVariant = InkSecondary,
+    surfaceContainer = Color.White,
+    surfaceContainerLow = Color.White,
+    surfaceContainerHigh = Color.White,
+    outline = OutlineStrong,
+    outlineVariant = Hairline,
+    error = DangerLight,
+    onError = Color.White,
 )
 
+/** Brand colours always; Android 12+ wallpaper colours are off so every phone looks the same (DESIGN.md). */
 @Composable
 fun ChimuTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val extras = if (darkTheme) DarkChimuColors else LightChimuColors
+    CompositionLocalProvider(LocalChimuColors provides extras) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
     }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
 }
