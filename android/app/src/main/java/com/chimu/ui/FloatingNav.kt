@@ -81,11 +81,11 @@ private object NotchedBar : Shape {
 }
 
 /**
- * The floating, icon-only nav bar from the Dusk design: Home, Transactions, Plan, [ + ], Dashboard, Group, Profile.
- * Each side's three slots are equal width, the icons sit on the bar's centre line, and a small dot slides to the chosen tab (it stretches while it moves).
+ * The floating, icon-only nav bar from the Dusk design: Home, Transactions, [ + ], Dashboard, Group.
+ * Each side's two slots are equal width, the icons sit on the bar's centre line, and a small dot slides to the chosen tab (it stretches while it moves).
  * Icons carry no words on screen, so each one has a spoken name (RULES 21). [attention] is how many things wait for
- * the person (Inbox items, a failed sync): it puts a dot on Profile, written out for screen readers, so an error
- * never hides just because sync moved off Home (RULES 20).
+ * the person (Inbox items, a failed sync): it puts a dot on Home, written out for screen readers, so an error
+ * never hides just because Profile left the bar (RULES 20).
  */
 @Composable
 fun FloatingNav(
@@ -104,12 +104,12 @@ fun FloatingNav(
     ) {
         val barWidth = maxWidth
         val centre = barWidth / 2
-        // Each side is three equal slots between the bar's end and the dip.
+        // Each side is two equal slots between the bar's end and the dip.
         val sideWidth = centre - NotchHalf - SideInset
-        val slot = sideWidth / 3
+        val slot = sideWidth / 2
         fun slotCentre(tab: NavTab): androidx.compose.ui.unit.Dp {
             val i = tab.ordinal
-            return if (i < 3) SideInset + slot * i + slot / 2 else centre + NotchHalf + slot * (i - 3) + slot / 2
+            return if (i < 2) SideInset + slot * i + slot / 2 else centre + NotchHalf + slot * (i - 2) + slot / 2
         }
 
         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(BarHeight)) {
@@ -139,17 +139,15 @@ fun FloatingNav(
                 )
             }
 
-            // The six slots.
+            // The four slots.
             Row(Modifier.fillMaxSize()) {
                 Box(Modifier.width(SideInset))
-                NavSlot(ChimuIcons.Home, "Home", selected == NavTab.HOME, 0, Modifier.width(slot)) { onSelect(NavTab.HOME) }
+                val homeName = if (attention > 0) "Home, $attention ${if (attention == 1) "thing needs" else "things need"} your attention" else "Home"
+                NavSlot(ChimuIcons.Home, homeName, selected == NavTab.HOME, attention, Modifier.width(slot)) { onSelect(NavTab.HOME) }
                 NavSlot(ChimuIcons.Transactions, "Transactions", selected == NavTab.TRANSACTIONS, 0, Modifier.width(slot)) { onSelect(NavTab.TRANSACTIONS) }
-                NavSlot(ChimuIcons.Plan, "Plan: budgets, goals and recurring", selected == NavTab.PLAN, 0, Modifier.width(slot)) { onSelect(NavTab.PLAN) }
                 Box(Modifier.width(NotchHalf * 2)) // the + button sits here
                 NavSlot(ChimuIcons.Dashboard, "Dashboard", selected == NavTab.DASHBOARD, 0, Modifier.width(slot)) { onSelect(NavTab.DASHBOARD) }
                 NavSlot(ChimuIcons.Group, "Group", selected == NavTab.GROUP, 0, Modifier.width(slot)) { onSelect(NavTab.GROUP) }
-                val profileName = if (attention > 0) "Profile, $attention ${if (attention == 1) "thing needs" else "things need"} your attention" else "Profile"
-                NavSlot(ChimuIcons.Profile, profileName, selected == NavTab.PROFILE, attention, Modifier.width(slot)) { onSelect(NavTab.PROFILE) }
             }
 
         }

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Chimu" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- White from the first frame, so the animated loading screen (LaunchSplash) is the first thing with any design in it. -->
+    <style name="Theme.Chimu" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
 </resources>

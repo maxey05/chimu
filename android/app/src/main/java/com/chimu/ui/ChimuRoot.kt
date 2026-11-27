@@ -59,7 +59,6 @@ private const val GROUP = "group"
 private const val GROUP_CREATE = "group_create"
 private const val GROUP_JOIN = "group_join"
 private const val GROUP_TXN = "group_txn"
-private const val PLAN = "plan"
 private const val DASHBOARD = "dashboard"
 private const val PROFILE = "profile"
 private const val WALLETS = "wallets"
@@ -81,13 +80,11 @@ private val EaseOutExpo = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 private fun NavTab.routeName(): String = when (this) {
     NavTab.HOME -> HOME
     NavTab.TRANSACTIONS -> TRANSACTIONS
-    NavTab.PLAN -> PLAN
     NavTab.DASHBOARD -> DASHBOARD
     NavTab.GROUP -> GROUP
-    NavTab.PROFILE -> PROFILE
 }
 
-private val TAB_ROUTES = setOf(HOME, TRANSACTIONS, PLAN, DASHBOARD, GROUP, PROFILE)
+private val TAB_ROUTES = setOf(HOME, TRANSACTIONS, DASHBOARD, GROUP)
 
 /**
  * A tab's destination. Moving between two tabs has no built-in fade, because [MainShell] slides the screen itself (a swipe
@@ -104,15 +101,22 @@ private fun NavGraphBuilder.tab(route: String, content: @Composable (NavBackStac
 }
 
 /**
- * Decides what the person sees: setup help, the sign-in screen, or the app.
+ * Decides what the person sees: setup help, the sign-in screen, or the app, with the animated loading screen
+ * laid over it when the app starts.
  *
  * Being signed in comes from [com.chimu.Account], which is remembered on the phone. That is what
  * lets the app open straight into the user's data with no network (it is offline-first), while
  * supabase-kt restores and refreshes the real session in the background.
+ *
+ * The loading screen ([LaunchSplash]) sits on top while the screen underneath gets ready, then fades away over it.
+ * "Ready" means what the person would otherwise have waited for with a spinner: their data open, or the sign-in
+ * screen decided on.
  */
 @Composable
 fun ChimuRoot() {
     if (!Supa.isConfigured) {
+        // Developer setup help: nothing to wait for, so no loading screen.
+        LaunchedEffect(Unit) { LaunchGate.handOver() }
         SetupNeededScreen()
         return
     }
@@ -120,6 +124,7 @@ fun ChimuRoot() {
     val app = LocalContext.current.applicationContext as ChimuApp
     val status by Supa.client.auth.sessionStatus.collectAsState()
     val identity by app.account.identity.collectAsState()
+    val openOwner by app.repo.openOwner.collectAsState()
 
     // A fresh sign-in, sign-up or restored session: remember who it is.
     LaunchedEffect(status) {
@@ -127,10 +132,14 @@ fun ChimuRoot() {
     }
 
     val signedIn = identity
-    when {
-        signedIn != null -> MainShell(app, signedIn)
-        status is SessionStatus.Initializing -> Splash()
-        else -> AuthScreen()
+    Box(Modifier.fillMaxSize()) {
+        when {
+            signedIn != null -> MainShell(app, signedIn)
+            status is SessionStatus.Initializing -> Splash()
+            else -> AuthScreen()
+        }
+        val ready = if (signedIn != null) openOwner == signedIn.userId else status !is SessionStatus.Initializing
+        LaunchSplash(ready)
     }
 }
 
@@ -152,10 +161,8 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
     val selectedTab = when (route) {
         HOME -> NavTab.HOME
         TRANSACTIONS -> NavTab.TRANSACTIONS
-        PLAN -> NavTab.PLAN
         DASHBOARD -> NavTab.DASHBOARD
         GROUP -> NavTab.GROUP
-        PROFILE -> NavTab.PROFILE
         else -> null
     }
     val onTab = selectedTab != null
@@ -173,7 +180,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
     val sync by app.sync.status.collectAsState()
     val attention = inbox.size + if (sync.error != null) 1 else 0
 
-    // Changing tab, by a tap on the bar or a swipe (v5 design). `shift` is how far the screen is drawn from where it rests, in px.
+    // Changing tab, by a tap on the bar or a swipe (v5 design; four tabs since v6). `shift` is how far the screen is drawn from where it rests, in px.
     // A swipe follows the finger; letting go past 72 dp (or with a flick) slides the screen out, opens the next tab and
     // slides that in from the other side. A tap does the slide-in only. With Android's animations off it just switches.
     val reduceMotion = rememberReduceMotion()
@@ -262,6 +269,7 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     identity,
                     attention = attention,
                     onBalanceDetails = { nav.navigate(WALLETS) },
+                    onProfile = { nav.navigate(PROFILE) },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
                     onSeeAll = { nav.goToTab(TRANSACTIONS) },
@@ -291,8 +299,8 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
             ) { entry ->
                 GroupTxnScreen(app, entry.arguments?.getString("id") ?: "", onClose = { nav.popBackStack() })
             }
-            tab(PLAN) {
-                PlanScreen(
+            tab(DASHBOARD) {
+                DashboardScreen(
                     app,
                     identity,
                     onBudgets = { nav.navigate(BUDGETS) },
@@ -300,14 +308,15 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
                     onGoals = { nav.navigate(GOALS) },
                 )
             }
-            tab(DASHBOARD) { DashboardScreen(app, identity) }
-            tab(PROFILE) {
+            // Profile is not a tab: it opens from Home's account menu, slides in like any other screen and has a back arrow.
+            composable(PROFILE) {
                 ProfileScreen(
                     app,
                     identity,
                     onWallets = { nav.navigate(WALLETS) },
                     onInbox = { nav.navigate(INBOX) },
                     onAutoLog = { nav.navigate(AUTO_LOG) },
+                    onBack = { nav.popBackStack() },
                 )
             }
             composable(INBOX) {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chimu.BudgetRules
 import com.chimu.ChimuApp
 import com.chimu.Identity
 import com.chimu.Ledger
@@ -29,15 +31,27 @@ import com.chimu.TopCategories
 import java.time.YearMonth
 
 /**
- * Dashboard tab: this month at a glance. What was spent and earned, then where the money went by category
- * (the card that used to sit under More). The web dashboard stays the place for the full charts and export.
+ * Dashboard tab: this month at a glance, and what is coming up. What was spent and earned, where the money went by
+ * category, then the three fullest budgets and the lists for Budgets, Recurring and Goals (v6: the Plan tab was
+ * folded in here). The web dashboard stays the place for the full charts and export.
  */
 @Composable
-fun DashboardScreen(app: ChimuApp, identity: Identity) {
+fun DashboardScreen(
+    app: ChimuApp,
+    identity: Identity,
+    onBudgets: () -> Unit,
+    onRecurring: () -> Unit,
+    onGoals: () -> Unit,
+) {
     val txns by app.repo.txns.collectAsState()
+    val budgets by app.repo.budgets.collectAsState()
+    val groupSnapshot by app.repo.groups.collectAsState()
     val month = remember { YearMonth.now().toString() }
     val totals = remember(txns, month) { Ledger.monthTotals(txns, month) }
     val topCategories = remember(txns, month, identity.userId) { TopCategories.top(txns, month, identity.userId) }
+    val topBudgets = remember(budgets, txns, groupSnapshot, month, identity.userId) {
+        BudgetRules.top(BudgetRules.usageList(identity.userId, budgets, txns, groupSnapshot, month), HOME_BUDGETS)
+    }
 
     Column(
         modifier = Modifier
@@ -62,7 +76,21 @@ fun DashboardScreen(app: ChimuApp, identity: Identity) {
                 StatTile("Income", totals.income, Modifier.weight(1f))
             }
             TopCategoriesCard(topCategories, totals.spent)
+            if (topBudgets.isNotEmpty()) BudgetsCard(topBudgets, groupSnapshot, identity.userId, onBudgets)
         }
+        Text(
+            "Plan ahead",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 8.dp),
+        )
+        HorizontalDivider()
+        ListRow("Budgets", onBudgets)
+        HorizontalDivider()
+        ListRow("Recurring", onRecurring)
+        HorizontalDivider()
+        ListRow("Goals", onGoals)
+        HorizontalDivider()
     }
 }
 

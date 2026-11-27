@@ -46,9 +46,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * Profile tab: who is signed in, how syncing stands, and the things that used to sit under More
- * (Wallets, Inbox, auto-log setup, sign out). Budgets, Recurring and Goals moved to Plan; the month's
- * categories moved to Dashboard.
+ * Profile: who is signed in, how syncing stands, and the things that used to sit under More
+ * (Wallets, Inbox, auto-log setup, sign out). It is no longer a tab (v6): it opens from the account menu on Home and
+ * has a back arrow. Budgets, Recurring and Goals are on Dashboard.
  */
 @Composable
 fun ProfileScreen(
@@ -57,6 +57,7 @@ fun ProfileScreen(
     onWallets: () -> Unit,
     onInbox: () -> Unit,
     onAutoLog: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val inbox by app.repo.inbox.collectAsState()
     val txns by app.repo.txns.collectAsState()
@@ -73,11 +74,7 @@ fun ProfileScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = LocalNavInset.current),
     ) {
-        Text(
-            "Profile",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp),
-        )
+        FormHeader("Profile", onBack)
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -142,7 +139,7 @@ internal fun ProfileAvatar(name: String?, size: Dp) {
     }
 }
 
-/** One tappable line of a list screen (Profile and Plan). */
+/** One tappable line of a list screen (Profile and Dashboard). */
 @Composable
 internal fun ListRow(label: String, onClick: () -> Unit) {
     Row(

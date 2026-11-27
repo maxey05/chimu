@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Android 12+ draws its own launch screen first. Keep it plain white with no icon, so it flows straight into the
+         animated one instead of showing the app icon twice. -->
+    <style name="Theme.Chimu" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowSplashScreenBackground">@android:color/white</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+    </style>
+</resources>

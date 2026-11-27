@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +91,7 @@ import java.time.YearMonth
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private val EaseOutExpo = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
@@ -108,10 +110,10 @@ private fun Modifier.rise(a: Animatable<Float, AnimationVector1D>): Modifier = g
 
 /**
  * Home (Dusk design): welcome header with the account menu, the balance card, the Expenditures chart (line or bars)
- * and the latest three transactions, which open a small panel of details when tapped. Budgets live on Plan, the
- * month's categories on Dashboard, and Inbox, sync and auto-log setup on Profile.
+ * and the latest three transactions, which open a small panel of details when tapped. Budgets, Recurring and Goals live
+ * on Dashboard, and Inbox, sync and auto-log setup on Profile, which the account menu opens.
  *
- * Startup: the header appears first, the other panels follow 0.2 s later one after another, the total counts up
+ * Startup: once the loading screen starts to fade, the header appears first, the other panels follow 0.2 s later one after another, the total counts up
  * and the chart line is drawn by a dot travelling along it. Android's "remove animations" setting turns all of it off.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +123,7 @@ fun HomeScreen(
     identity: Identity,
     attention: Int,
     onBalanceDetails: () -> Unit,
+    onProfile: () -> Unit,
     onInbox: () -> Unit,
     onAutoLog: () -> Unit,
     onSeeAll: () -> Unit,
@@ -161,6 +164,9 @@ fun HomeScreen(
 
     LaunchedEffect(Unit) {
         if (!animate) return@LaunchedEffect
+        // On a fresh start the loading screen is still on top. Wait until it begins to fade, so the entrance plays
+        // as it clears instead of finishing out of sight behind it.
+        snapshotFlow { LaunchGate.handedOver }.first { it }
         HomeIntro.played = true
         // header, balance card, chart, "Recent Transactions", then its three rows: the header leads by 0.2 s
         val delays = listOf(0L, 290L, 380L, 470L, 530L, 590L, 650L)
@@ -204,6 +210,7 @@ fun HomeScreen(
                     attention = attention,
                     inboxCount = inbox.size,
                     sync = sync,
+                    onProfile = onProfile,
                     onInbox = onInbox,
                     onWallets = onBalanceDetails,
                     onAutoLog = onAutoLog,
@@ -297,7 +304,7 @@ fun HomeScreen(
 
 /**
  * "Welcome back," and the name, with the account pill on the right. The pill (avatar, a count of things waiting,
- * and a chevron) opens a small menu: who is signed in, Inbox with its number, Wallets, when it last synced
+ * and a chevron) opens a small menu: who is signed in, Profile, Inbox with its number, Wallets, when it last synced
  * (tap to sync now), auto-log setup and Sign out.
  */
 @Composable
@@ -307,6 +314,7 @@ private fun Header(
     attention: Int,
     inboxCount: Int,
     sync: SyncStatus,
+    onProfile: () -> Unit,
     onInbox: () -> Unit,
     onWallets: () -> Unit,
     onAutoLog: () -> Unit,
@@ -376,6 +384,7 @@ private fun Header(
                     }
                 }
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                MenuRow(ChimuIcons.Profile, "Profile") { open = false; onProfile() }
                 MenuRow(ChimuIcons.Inbox, "Inbox", badge = inboxCount.takeIf { it > 0 }?.toString()) { open = false; onInbox() }
                 MenuRow(ChimuIcons.Wallet, "Wallets") { open = false; onWallets() }
                 // Tapping syncs now and keeps the menu open, so the spinning icon and the new time are seen.

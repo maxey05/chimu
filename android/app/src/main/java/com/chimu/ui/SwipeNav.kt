@@ -3,7 +3,7 @@ package com.chimu.ui
 import kotlin.math.abs
 
 /**
- * The rules for swiping between the six tabs (v5 design), kept as plain numbers so they can be unit tested.
+ * The rules for swiping between the four tabs (v6 design), kept as plain numbers so they can be unit tested.
  * Distances are in dp; a drag to the left is negative and goes to the next tab, a drag to the right goes back.
  */
 object SwipeNav {
@@ -17,7 +17,7 @@ object SwipeNav {
     /** The screen follows the finger by this share of the drag. */
     const val FOLLOW = 0.9f
 
-    /** Where there is no tab to go to (left of Home, right of Profile) the screen only stretches by this share. */
+    /** Where there is no tab to go to (left of Home, right of Group) the screen only stretches by this share. */
     const val RUBBER_BAND = 0.28f
 
     /** The tab [step] places along (1 = next, -1 = previous), or null at either end. */
