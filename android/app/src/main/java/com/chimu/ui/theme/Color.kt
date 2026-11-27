@@ -22,7 +22,7 @@ val WarningLight = Color(0xFF8A5300)
 
 /** Brand colours that Material's scheme has no slot for. Read with [MaterialTheme.chimu]. */
 data class ChimuColors(
-    /** Chevron and wash for money coming in. Colour is never the only cue: sign and chevron say it too. */
+    /** Chevron and wash for money coming in: a livelier indigo than Periwinkle so the up chevron stands out (v7). Colour is never the only cue: sign and chevron say it too. */
     val gain: Color,
     val gainContainer: Color,
     /** Chevron and amount for money going out, a little greyed against a gain. */
@@ -44,8 +44,8 @@ data class ChimuColors(
 )
 
 val LightChimuColors = ChimuColors(
-    gain = Periwinkle,
-    gainContainer = PrimaryWash,
+    gain = Color(0xFF3A55D6),
+    gainContainer = Color(0xFFE3E8FF),
     loss = Color(0xFF6C7396),
     lossContainer = Color(0xFFF3F2F7),
     accent = Lavender,
