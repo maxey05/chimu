@@ -105,7 +105,7 @@ private fun Modifier.fadeRise(a: Animatable<Float, AnimationVector1D>?): Modifie
     }
 
 /**
- * Transactions (Dusk design): a small centred title, the search field, three filter chips (Month, Types, Category) that
+ * Transactions (Dusk design): a small centred title, the search field, three filter chips (Month, Types, Class) that
  * share one row, then every entry grouped by day. Each chip opens its own menu, which drops down and fades its choices in. Tapping a row opens a small panel of details (one at a time). The + in the nav bar is the
  * add button, so there is none here.
  *
@@ -137,7 +137,7 @@ fun TransactionsScreen(app: ChimuApp, onOpen: (String) -> Unit) {
     val monthChoices = remember(txns) {
         listOf(Choice(null, "All months")) + Ledger.months(txns).map { Choice(it, Ledger.monthLabel(it)) }
     }
-    val categoryChoices = remember { listOf(Choice(null, "All categories")) + Categories.all.map { Choice(it.slug, it.label) } }
+    val categoryChoices = remember { listOf(Choice(null, "All classes")) + Categories.all.map { Choice(it.slug, it.label) } }
     val typeChoices = remember { listOf(Choice(null, "All types")) + TxnType.entries.map { Choice(it.slug, it.label) } }
     // How many rows each choice would show, so the menus never promise an empty list.
     val monthCounts = remember(txns, filter) { Ledger.optionCounts(txns, filter, FilterPart.MONTH) }
@@ -163,7 +163,7 @@ fun TransactionsScreen(app: ChimuApp, onOpen: (String) -> Unit) {
             item {
                 Text(
                     "Transactions",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.Normal),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp).fadeRise(rise[0]),
                 )
@@ -212,8 +212,8 @@ fun TransactionsScreen(app: ChimuApp, onOpen: (String) -> Unit) {
                         modifier = Modifier.weight(1f),
                     )
                     FilterChipMenu(
-                        title = "Category",
-                        valueText = category?.let { Categories.label(it) } ?: "Category",
+                        title = "Class",
+                        valueText = category?.let { Categories.label(it) } ?: "Class",
                         active = category != null,
                         choices = categoryChoices,
                         counts = categoryCounts,
@@ -274,10 +274,10 @@ fun TransactionsScreen(app: ChimuApp, onOpen: (String) -> Unit) {
     }
 }
 
-/** The grey line under a row's name: category and wallet (the date is in the day heading). */
+/** The grey line under a row's name: class (the category) and wallet (the date is in the day heading). */
 private fun subtitleFor(app: ChimuApp, txn: Txn): String = when (txn.type) {
     TxnType.TRANSFER -> "${app.repo.walletLabel(txn.walletId)} to ${app.repo.walletLabel(txn.toWalletId)}"
-    else -> "${Categories.label(txn.category).ifBlank { "No category" }} · ${app.repo.walletLabel(txn.walletId)}"
+    else -> "${Categories.label(txn.category).ifBlank { "No class" }} · ${app.repo.walletLabel(txn.walletId)}"
 }
 
 private fun buildEntries(rows: List<Txn>, today: LocalDate): List<Entry> {
@@ -310,7 +310,7 @@ private fun monthChip(month: String, today: LocalDate): String {
     return ym.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))
 }
 
-/** Which side of its chip a menu lines up with, so the menu stays on screen: Month on the left, Category on the right. */
+/** Which side of its chip a menu lines up with, so the menu stays on screen: Month on the left, Class on the right. */
 private enum class MenuSide(val alignment: Alignment, val origin: TransformOrigin) {
     START(Alignment.TopStart, TransformOrigin(0.15f, 0f)),
     CENTER(Alignment.TopCenter, TransformOrigin(0.5f, 0f)),
@@ -406,7 +406,6 @@ private fun FilterChipMenu(
                         fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.96f, transformOrigin = side.origin),
                 ) {
                     FilterMenuCard(
-                        title = title,
                         choices = choices,
                         counts = counts,
                         selectedKey = selectedKey,
@@ -423,10 +422,9 @@ private fun FilterChipMenu(
     }
 }
 
-/** The menu itself: a small heading, then one row per choice. Tall lists (Category) scroll inside the card. */
+/** The menu itself: one row per choice. Tall lists (Class) scroll inside the card; there is no heading, the chip above already names the filter. */
 @Composable
 private fun FilterMenuCard(
-    title: String,
     choices: List<Choice>,
     counts: Map<String?, Int>,
     selectedKey: String?,
@@ -449,12 +447,6 @@ private fun FilterMenuCard(
                     .verticalScroll(rememberScrollState())
                     .padding(6.dp),
             ) {
-                Text(
-                    title.uppercase(Locale.ENGLISH),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
-                )
                 choices.forEachIndexed { i, choice ->
                     val on = choice.key == selectedKey
                     // Each row fades in a little after the one above it (a short beat, then 28 ms apart).

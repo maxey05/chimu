@@ -191,7 +191,7 @@ private fun detailsFor(app: ChimuApp, txn: Txn, unread: Boolean): List<Detail> {
         out += Detail("To", app.repo.walletLabel(txn.toWalletId))
     } else {
         out += Detail("Wallet", app.repo.walletLabel(txn.walletId))
-        Categories.label(txn.category).takeIf { it.isNotBlank() }?.let { out += Detail("Category", it) }
+        Categories.label(txn.category).takeIf { it.isNotBlank() }?.let { out += Detail("Class", it) }
     }
     out += Detail(
         "Logged",
