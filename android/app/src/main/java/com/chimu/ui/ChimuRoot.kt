@@ -2,14 +2,19 @@ package com.chimu.ui
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
@@ -19,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -44,6 +50,7 @@ import androidx.navigation.navArgument
 import com.chimu.ChimuApp
 import com.chimu.Identity
 import com.chimu.Supa
+import com.chimu.ui.theme.chimu
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import kotlin.math.abs
@@ -217,6 +224,16 @@ private fun MainShell(app: ChimuApp, identity: Identity) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbars, modifier = Modifier.padding(bottom = if (onTab) NavInset - 24.dp else 0.dp)) },
     ) { padding ->
+        // Home and Transactions have a lavender wash at the top. The screen is padded below the status bar, so the wash
+        // used to start under it and left a white strip across the top. This strip carries the wash's top colour up behind
+        // the status bar, so the two meet with no seam. Other screens keep a white top; it fades between the two (v7).
+        val washTop = MaterialTheme.chimu.topWash[0]
+        val statusStrip by animateColorAsState(
+            targetValue = if (selectedTab == NavTab.HOME || selectedTab == NavTab.TRANSACTIONS) washTop else Color.White,
+            animationSpec = tween(if (reduceMotion) 0 else 300),
+            label = "statusStrip",
+        )
+        Box(Modifier.fillMaxWidth().height(padding.calculateTopPadding()).background(statusStrip))
         Box(Modifier.fillMaxSize().padding(padding)) {
         // The outer box stays put and watches for swipes; only the inner one moves, so the drag is measured against a fixed frame.
         Box(
