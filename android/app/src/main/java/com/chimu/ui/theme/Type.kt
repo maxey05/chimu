@@ -16,11 +16,14 @@ val Archivo = FontFamily(
     Font(R.font.archivo_bold, FontWeight.Bold),
 )
 
-/** Barlow, only for section subheadings such as "Expenditures" and "Recent Transactions". */
+/** Barlow, only for section subheadings such as "Expenditures" and "Recent Transactions" (SemiBold since v6, lighter than before). */
 val Barlow = FontFamily(
     Font(R.font.barlow_semibold, FontWeight.SemiBold),
     Font(R.font.barlow_bold, FontWeight.Bold),
 )
+
+/** Baloo 2 ExtraBold, only for the chimu wordmark on the loading screen (DESIGN.md -> Brand & visual identity). */
+val Baloo2 = FontFamily(Font(R.font.baloo2_extrabold, FontWeight.ExtraBold))
 
 // Larger than the Material defaults: the main user is older, so text is big and easy to read.
 private val chimuStyles = Typography(
@@ -82,7 +85,7 @@ private val chimuStyles = Typography(
     ),
     titleSmall = TextStyle(
         fontFamily = Barlow,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 18.sp,
         lineHeight = 24.sp,
         letterSpacing = (-0.2).sp

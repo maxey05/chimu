@@ -20,12 +20,6 @@ val OutlineStrong = Color(0xFF8A8FA8)
 val DangerLight = Color(0xFFB3261E)
 val WarningLight = Color(0xFF8A5300)
 
-// Dark mode: derived from the light palette.
-val DarkPage = Color(0xFF10182F)
-val DarkSurface = Color(0xFF1A2342)
-val DarkInkSecondary = Color(0xFFB9BDD3)
-val DangerDark = Color(0xFFFFB4AB)
-
 /** Brand colours that Material's scheme has no slot for. Read with [MaterialTheme.chimu]. */
 data class ChimuColors(
     /** Chevron and wash for money coming in. Colour is never the only cue: sign and chevron say it too. */
@@ -45,7 +39,7 @@ data class ChimuColors(
     val topWash: List<Color>,
     /** The quiet fill behind a transaction's details panel and its transfer icon. */
     val detailWash: Color,
-    /** The Home total and its panels stay dark-on-light in both modes. */
+    /** The Home total and its panels are dark ink on the light card. */
     val onHero: Color,
 )
 
@@ -61,21 +55,6 @@ val LightChimuColors = ChimuColors(
     heroGradient = listOf(Lavender, LoveRose, LoveApricot),
     topWash = listOf(Color(0xFFD8CAE4), Color(0xFFE9E0F0), Color(0xFFF6F2F9), Color(0xFFFFFFFF)),
     detailWash = Color(0xFFF7F5FA),
-    onHero = IndigoInk,
-)
-
-val DarkChimuColors = ChimuColors(
-    gain = Lavender,
-    gainContainer = Color(0xFF2A3358),
-    loss = Color(0xFF9AA0BF),
-    lossContainer = Color(0xFF232B4A),
-    accent = Lavender,
-    dawning = Dawning,
-    outlineStrong = Color(0xFF8A8FA8),
-    warning = Color(0xFFFFC27A),
-    heroGradient = listOf(Lavender, LoveRose, LoveApricot),
-    topWash = listOf(Color(0xFF2B3560), Color(0xFF222B4F), Color(0xFF181F3B), DarkPage),
-    detailWash = Color(0xFF1F2744),
     onHero = IndigoInk,
 )
 
