@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed (monochrome) launcher icon: Chimu's dome and curl as one flat shape, eyes and beak cut out (DESIGN.md -> Mark and icon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.16,81.84a47.84,49.92 0 1,1 95.68,0a47.84,49.92 0 1,1 -95.68,0zM36.53,71.44a4.47,5.1 0 1,0 8.94,0a4.47,5.1 0 1,0 -8.94,0zM61.49,71.44a4.47,5.1 0 1,0 8.94,0a4.47,5.1 0 1,0 -8.94,0zM49.58,76.12Q51.92,81.84 53.48,81.84Q55.04,81.84 57.38,76.12Q53.48,74.3 49.58,76.12z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M50.88,35.04C47.76,27.76 51.92,21.52 59.2,21C56.6,25.16 55.56,29.84 57.12,35.04z" />
+</vector>
