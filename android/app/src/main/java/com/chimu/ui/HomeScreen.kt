@@ -151,6 +151,8 @@ fun HomeScreen(
     var picked by remember(period) { mutableStateOf<Int?>(null) }
     val selected = picked?.takeIf { series.points.getOrNull(it)?.spent != null } ?: series.currentIndex
     var showBars by rememberSaveable { mutableStateOf(false) }
+    // Hides the balance card's amounts. Kept across rotation and tab changes, not across app launches (v7).
+    var balanceHidden by rememberSaveable { mutableStateOf(false) }
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
 
@@ -224,7 +226,9 @@ fun HomeScreen(
                     balance = (totalBalance * count.value.toDouble()).toLong(), // Double: a Float cannot hold centavos above 16.7 million exactly
                     income = totals.income,
                     expenses = totals.spent,
+                    hidden = balanceHidden,
                     reduceMotion = reduce,
+                    onToggleHidden = { balanceHidden = !balanceHidden },
                     onDetails = onBalanceDetails,
                     modifier = Modifier.rise(rise[1]),
                 )
@@ -479,7 +483,9 @@ private fun BalanceCard(
     balance: Long,
     income: Long,
     expenses: Long,
+    hidden: Boolean,
     reduceMotion: Boolean,
+    onToggleHidden: () -> Unit,
     onDetails: () -> Unit,
     modifier: Modifier,
 ) {
@@ -494,56 +500,106 @@ private fun BalanceCard(
             .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(monthName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+        Column {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Total balance", fontSize = 16.sp, color = ink)
-                Text(Money.format(balance), fontSize = 36.sp, fontWeight = FontWeight.Bold, color = ink)
-            }
-            // The arrow slides out the way it points (up and right), then returns from the lower left.
-            Box(
-                Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onBackground)
-                    .clickable(role = Role.Button) {
-                        scope.launch {
-                            if (reduceMotion) {
-                                onDetails()
-                            } else {
-                                shift.animateTo(1f, tween(240, easing = FastOutLinearInEasing))
-                                onDetails()
-                                shift.snapTo(-1f)
-                                shift.animateTo(0f, tween(320, easing = EaseOutExpo))
+                // The arrow slides out the way it points (up and right), then returns from the lower left.
+                Box(
+                    Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onBackground)
+                        .clickable(role = Role.Button) {
+                            scope.launch {
+                                if (reduceMotion) {
+                                    onDetails()
+                                } else {
+                                    shift.animateTo(1f, tween(240, easing = FastOutLinearInEasing))
+                                    onDetails()
+                                    shift.snapTo(-1f)
+                                    shift.animateTo(0f, tween(320, easing = EaseOutExpo))
+                                }
                             }
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    ChimuIcons.ArrowUpRight,
-                    contentDescription = "View balance details",
-                    tint = MaterialTheme.colorScheme.background,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .graphicsLayer {
-                            translationX = shift.value * 16.dp.toPx()
-                            translationY = -shift.value * 16.dp.toPx()
-                            alpha = 1f - abs(shift.value) * 0.9f
                         },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        ChimuIcons.ArrowUpRight,
+                        contentDescription = "View balance details",
+                        tint = MaterialTheme.colorScheme.background,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .graphicsLayer {
+                                translationX = shift.value * 16.dp.toPx()
+                                translationY = -shift.value * 16.dp.toPx()
+                                alpha = 1f - abs(shift.value) * 0.9f
+                            },
+                    )
+                }
+            }
+            // The hide button sits right beside the money it hides. Hidden, the amount is asterisks and says so out loud.
+            Row(Modifier.fillMaxWidth().offset(y = (-6).dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    if (hidden) MASKED_MONEY else Money.format(balance),
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ink,
+                    modifier = Modifier.weight(1f, fill = false).semantics { if (hidden) contentDescription = "Balance hidden" },
+                )
+                HideBalanceButton(hidden, ink, onToggleHidden)
+            }
+        }
+        // The month heads both panels, so it is clear that Income and Expenses are for this month only.
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(monthName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlassPanel("Income", if (hidden) MASKED_MONEY else Money.format(income), ink, Modifier.weight(1f))
+                // Money going out is a little greyed and carries a minus, like the rows in the list.
+                GlassPanel(
+                    "Expenses",
+                    if (hidden) "-$MASKED_MONEY" else (if (expenses > 0) "-" else "") + Money.format(expenses),
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    Modifier.weight(1f),
                 )
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GlassPanel("Income", income, ink, Modifier.weight(1f))
-            GlassPanel("Expenses", expenses, ink, Modifier.weight(1f))
+    }
+}
+
+/** What replaces an amount while the balance is hidden. */
+private const val MASKED_MONEY = "₱******"
+
+/** The eye beside the balance: a 48 dp target around a small frosted circle. It says what it will do, not what it shows. */
+@Composable
+private fun HideBalanceButton(hidden: Boolean, ink: Color, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.5f))
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.65f)), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (hidden) ChimuIcons.EyeOff else ChimuIcons.Eye,
+                contentDescription = if (hidden) "Show balance" else "Hide balance",
+                tint = ink,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
 
 /** A frosted-looking panel: translucent white with a light edge (Compose has no blur of what is behind a view). */
 @Composable
-private fun GlassPanel(label: String, amount: Long, ink: Color, modifier: Modifier) {
+private fun GlassPanel(label: String, amountText: String, amountColor: Color, modifier: Modifier) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
@@ -552,8 +608,8 @@ private fun GlassPanel(label: String, amount: Long, ink: Color, modifier: Modifi
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
-        Text(Money.format(amount), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.chimu.onHero)
+        Text(amountText, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = amountColor)
     }
 }
 
